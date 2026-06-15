@@ -7,13 +7,13 @@ const router = express.Router();
 
 // customer routes
 router.post('/placeorder',isAuthenticated,createOrder); // tested
-router.get('/myorders',isAuthenticated,getAllOrders);  // on the way
-router.get('/order/:id',isAuthenticated,getOrderById);
+router.get('/myorders', isAuthenticated,getAllOrders);  // tested
+router.get('/order/:id', isAuthenticated,getOrderById); // tested
 
 // admin routes
-router.get('/getorders',isAuthenticated,isAdmin,getAllOrders);
+router.get('/getorders',isAuthenticated,isAdmin,getAllOrders); 
 router.get('/getorder/:id',isAuthenticated,isAdmin,getOrderById);
-router.put('/updateorderstatus/:id',isAuthenticated,isAdmin,updateOrderStatus);
+router.put('/updateorderstatus/:id',isAuthenticated,isAdmin,updateOrderStatus); //tested
 
 // routes for the delivery partner
 router.get('/getassignedorders',isAuthenticated,getAssignedOrders);
