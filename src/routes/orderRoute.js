@@ -3,10 +3,10 @@ import { isAuthenticated, isAdmin } from '../middlewares/protectionMiddleware.js
 import { createOrder, getAllOrders, getOrderById, updateOrderStatus, getAssignedOrders, updateDeliveryStatus } from '../controllers/orderController.js';
 
 
-const router = express.Router();
+const router = express.Router();    
 
 // customer routes
-router.post('/placeorder',isAuthenticated,createOrder); // tested
+router.post('/placeorder',isAuthenticated, createOrder); // tested
 router.get('/myorders', isAuthenticated,getAllOrders);  // tested
 router.get('/order/:id', isAuthenticated,getOrderById); // tested
 

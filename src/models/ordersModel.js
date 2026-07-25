@@ -46,6 +46,11 @@ const orderSchema = new mongoose.Schema({
         enum:["pending","paid","failed"],
         default:"pending"
     },
+    payment_method:{
+        type:String,
+        enum:["cod","online"],
+        default:"cod"
+    },
     subtotal:{
         type:Number,
         default:0

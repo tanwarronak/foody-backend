@@ -2,9 +2,12 @@ import mongoose from 'mongoose';
 
 const paymentSchema = new mongoose.Schema({
         order_id:{
-            type:mogoose.schema.Types.ObjectId,
+            type:mongoose.Schema.Types.ObjectId,
             ref:'Order',
-            required:true
+        },
+        payment_order_id:{
+            type:String,
+            unique:true
         },
         payment_method:{
             type:String,
@@ -38,6 +41,6 @@ export const Payment = mongoose.model('Payment',paymentSchema);
 //   payment_method,
 //   amount,
 //   payment_status,
-//   transaction_id,
+//   transaction_id, --> razorpay_payment_id
 //   paid_at 
 

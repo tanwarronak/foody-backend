@@ -29,6 +29,18 @@ phone:{
     required:true,
     default:0
 },
+isAvailable:{
+    type:Boolean,
+    default:true
+},
+activeOrder:{
+    type:mongoose.Schema.Types.ObjectId,
+    ref:'Order'
+},
+isOnline:{
+    type:Boolean,
+    default:false
+},
 createdAt:{
     type:Date,
     default:Date.now

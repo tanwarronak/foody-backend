@@ -1,10 +1,11 @@
 import { Restaurant } from "../models/restaurantModel.js";
 import { Menu_item } from "../models/menuModel.js";
+import AzureStorageService from "../services/azureStorageService.js";
 
-// need to get image and store it into storage bucket and save the url in db
 export const createMenuItem = async (req,res)=>{
     try {
         const { name, description, price, category} = req.body;
+        const image = req.file; // Assuming the image is sent as a file in the request
         if(!name || !description || !price || !category)  return res.status(400).json({message:'all fields are required'})
         
         const restaurant = await Restaurant.findOne({
@@ -12,15 +13,21 @@ export const createMenuItem = async (req,res)=>{
         });
         // need to put a check to see if menu item with same name already exists for that restaurant
         if(!restaurant) return res.status(404).json({message:'restaurant not found'});
+
+        const blobName = await AzureStorageService.upload(image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
+        const imageUrl = AzureStorageService.generateReadUrl(blobName, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
+        
+
        const newMenuItem =  await new Menu_item({
             res_id : restaurant._id,
             name,
             description,
             price,
-            category
+            category,
+            image: blobName
         });
         await newMenuItem.save();
-        res.status(200).json({message:'item added successfully',menuItem: newMenuItem})
+        res.status(200).json({message:'item added successfully',menuItem: newMenuItem, imageUrl});
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
@@ -30,9 +37,15 @@ export const createMenuItem = async (req,res)=>{
 export const updateMenuItem = async (req,res)=>{
     try {
         const {name, description, price, category} = req.body;
+        const image = req.file; 
        const updatedMenuItem =  await Menu_item.findByIdAndUpdate(req.params.id,
             {name, description, price, category},{returnDocument:'after'});
             if(!updatedMenuItem) res.status(404).json({message:'item not found'});
+            updatedMenuItem.image = AzureStorageService.replace(
+                updatedMenuItem.image,
+                image,
+                process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
+                await updatedMenuItem.save();
             res.status(200).json({
                 message:'menu item updated successfully',
                 updatedMenuItem
@@ -46,11 +59,12 @@ export const updateMenuItem = async (req,res)=>{
 export const deleteMenuItem = async (req,res)=>{
     try {
         const deletedMenuItem = await Menu_item.findByIdAndDelete(req.params.id);
-        if(!deletedMenuItem) res.staus(404).json({
+        if(!deletedMenuItem) res.status(404).json({
             message:'item not found'
         });
+         await AzureStorageService.delete(deletedMenuItem.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
         res.status(200).json({message:'menu item removed successfully',
-        deleteMenuItem
+        deletedMenuItem
         });
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
@@ -64,7 +78,13 @@ export const getAllMenuItems = async (req,res)=>{
        if(!menuList) res.status(404).json({
             message:'item list not found'
         });
-        res.status(200).json({menuList})
+        const response = menuList.map(item => {
+            return {
+                ...item.toObject(),
+                image: AzureStorageService.generateReadUrl(item.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME)
+            };
+        });
+        res.status(200).json({menuList: response})
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
@@ -84,4 +104,3 @@ export const getMenuItemById = async (req,res)=>{
 };
 
 
-// add one more function to get all menu_items of a restaurant

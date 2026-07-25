@@ -3,13 +3,16 @@ import {Menu_item} from "../models/menuModel.js";
 import {User} from "../models/userModel.js";
 import {Restaurant} from "../models/restaurantModel.js";
 import {Cart_items} from "../models/cartModel.js";
+import { razorpayInstance } from "../config/razorpayConfig.js";
+import { Payment } from "../models/paymentModel.js";
+import { notifyOwner } from "../services/ownerNotificationService.js";
 import mongoose from "mongoose";
 
 export const createOrder = async (req, res) => {
     try {
         const user_id = req.user._id;
-        const { cartId } = req.body;
-        
+        const { cartId, payment_method } = req.body;
+    
         // fetch cart details
         const cart = await Cart_items.findById(cartId).populate('menu.menu_item_id');
         if(!cart || cart.user_id.toString() !== user_id.toString()){
@@ -31,13 +34,12 @@ export const createOrder = async (req, res) => {
 
         // check if order is already placed for the same cart
         const user = await User.findById(user_id);
-        const existingOrder = user.orders.filter(orderId => orderId.toString() === cartId.toString());
-
+        const existingOrder = await Order.find({ user_id: user_id, res_id: cart.res_id, items: { $elemMatch: { menu_item_id: { $in: orderItems.map(item => item.menu_item_id) } } }, order_status: { $in: ["pending", "accepted", "preparing", "ready for pickup", "out for delivery"] } });
         if (existingOrder?.length > 0) {
             return res.status(400).json({ message: "Order for this cart already exists" });
         }
 
-        const order = new Order({
+        let orderOptions ={
             user_id: user_id,
             res_id:cart.res_id,
             items: orderItems,
@@ -46,9 +48,38 @@ export const createOrder = async (req, res) => {
             delivery_fee: delivery_fee,
             total_amount: total,
             order_status: "pending",
-            payment_status: "pending",
             delivery_address: user.address, // may need to change it
             estimated_delivery_time: new Date(Date.now() + 40*60*1000) // 30 mins from now
+        }
+
+        if(payment_method === "online"){
+            let options = {
+            amount: total * 100, // 1 INR = 100 paise
+            currency: "INR",
+            receipt: `receipt_${Date.now()}`,
+        };
+        const order = new Order({
+           ...orderOptions,
+           payment_method: "online",
+           payment_status: "pending"
+        });
+        await order.save();
+        // Add order to user's orders list
+        user.orders.push(order._id);
+        await user.save();
+        // Add order to restaurant's orders list
+        const restaurant = await Restaurant.findById(cart.res_id);
+        restaurant.orders.push(order._id);
+        await restaurant.save();
+        const razorpayOrder = await razorpayInstance.orders.create(options);
+        res.status(201).json({ razorpayOrder, orderId:order._id });
+        }
+
+        if(payment_method === "cod"){
+            const order = new Order({
+           ...orderOptions,
+           payment_method: "cod",
+           payment_status: "pending"
         });
         await order.save();
         // Add order to user's orders list
@@ -59,9 +90,11 @@ export const createOrder = async (req, res) => {
         restaurant.orders.push(order._id);
         await restaurant.save();
         res.status(200).json({ message: "Order placed successfully"});
+        }
+        
     }
     catch(error){
-        res.status(500).json({ message:"Internal server error" });
+        res.status(500).json({ message:error.message });
     }
 };
 
@@ -158,6 +191,7 @@ export const getAllOrders = async (req, res) => {
         res.status(500).json({ message: "Internal server error" });
     }
 };
+
 
 export const getOrderById = async (req, res) => {
     try {
@@ -306,6 +340,7 @@ export const getOrderById = async (req, res) => {
     }   
 };
 
+
 export const updateOrderStatus = async (req, res) => {
     try {
             const orderId = req.params.id;
@@ -332,26 +367,92 @@ export const updateOrderStatus = async (req, res) => {
                 return res.status(400).json({message:`Invalid order status transition from ${order.order_status} to ${newStatus}`});
             }
             order.order_status = newStatus;
+            const orderData = await Order.aggregate([
+                {$match:{_id: new mongoose.Types.ObjectId(orderId)}},
+                {$lookup:{
+                    from:"restaurants",
+                    localField:"res_id",
+                    foreignField:"_id",
+                    as:"restaurant"
+                }},
+                {$lookup:{
+                    from:"users",
+                    localField:"user_id",
+                    foreignField:"_id",
+                    as:"user"
+                }},
+                {
+                    $addFields:{
+                        restaurant_name:{
+                            $first:"$restaurant.r_name"
+                        },
+                        restaurant_address:{
+                            $first:"$restaurant.address"
+                        },
+                        restaurant_contact:{
+                            $first:"$restaurant.phone"
+                        },
+                        customer_name:{
+                            $first:"$user.name"
+                        },
+                        customer_contact:{
+                            $first:"$user.phone"
+                        },
+                        customer_address:{
+                            $first:"$user.address"
+                        }
+                    }
+                },
+                {
+                    $project:{
+                        order_id:1,
+                        total_amount:1,
+                        payment_method:1,
+                        order_status:1,
+                        restaurant_name:1,
+                        restaurant_address:1,
+                        restaurant_contact:1,
+                        customer_name:1,
+                        customer_contact:1,
+                        customer_address:1
+                    }
+                }
+            ]);
+            if(newStatus==="accepted"||newStatus==="preparing"){
+            await notifyOwner(orderId,orderData[0]);
+            }
             await order.save();
             res.status(200).json({message:"Order status updated successfully"});
     }
     catch(error){
-        res.status(500).json({ message: "Internal server Error" });
+        res.status(500).json({ message: error.message });
     }   
 };
 
+
 export const getAssignedOrders = async (req, res) => {
     try {
-
+        const user = req.user._id;
+        if(!user){
+            return res.status(404).json({ message: "User not found" });
+        }
+        const deliveryPartner = await User.findById(user);
+        if(!deliveryPartner || deliveryPartner.role !== "deliveryPerson"){
+            return res.status(403).json({ message: "You are not authorized to view assigned orders" });
+        }
+        const assignedOrders = await Order.find({ d_partner_id: user });
+        if(!assignedOrders?.length) return res.status(404).json({message:"No assigned orders found"});
+        res.status(200).json(assignedOrders);
     }
     catch(error){
-        res.status(500).json({ message: "Internal server error" });
+        res.status(500).json({ message: error.message });
     }
 };
 
+
 export const updateDeliveryStatus = async (req, res) => {
     try {
-
+        
     }
     catch(error){
         res.status(500).json({ message: "Internal server error" });
