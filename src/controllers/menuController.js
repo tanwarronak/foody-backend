@@ -8,9 +8,10 @@ export const createMenuItem = async (req,res)=>{
         const image = req.file; // Assuming the image is sent as a file in the request
         if(!name || !description || !price || !category)  return res.status(400).json({message:'all fields are required'})
         
-        const restaurant = await Restaurant.findOne({
-            owner_id: req.user._id
-        });
+        const restaurant_id = req.params.restaurant_id;
+
+        const restaurant = await Restaurant.findById(restaurant_id);
+
         // need to put a check to see if menu item with same name already exists for that restaurant
         if(!restaurant) return res.status(404).json({message:'restaurant not found'});
 
@@ -19,7 +20,7 @@ export const createMenuItem = async (req,res)=>{
         
 
        const newMenuItem =  await new Menu_item({
-            res_id : restaurant._id,
+            res_id : restaurant_id,
             name,
             description,
             price,
@@ -93,11 +94,12 @@ export const getAllMenuItems = async (req,res)=>{
 
 export const getMenuItemById = async (req,res)=>{
     try {
-         const menuItem = await Menu_item.findById(req.params.id);
-        if(!menuItem){
+        const res_id = req.params.restaurant_id;
+        const menuItems = await Menu_item.find({res_id});
+        if(!menuItems || menuItems.length === 0) {
             return res.status(404).json({message: 'Menu Item not found'});
         }
-        res.status(200).json({menuItem});
+        res.status(200).json({menuItems});
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }

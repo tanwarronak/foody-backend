@@ -6,7 +6,7 @@ import {Payment} from "../models/paymentModel.js";
 export const verifyOrder = async (req, res) => {
     try{
         const { razorpay_order_id, razorpay_payment_id, razorpay_signature, order_id } = req.body;
-        const io = req.app.get('io');
+        
 
         const order = await Order.findById(req.params.order_id);
         if (!order) {
@@ -30,7 +30,6 @@ export const verifyOrder = async (req, res) => {
             await payment.save();
             order.payment_status = "paid";
             await order.save();
-            socketService(order._id,io);
             res.status(200).json({ message: 'Order verified and payment updated successfully' });
         } else {
             res.status(400).json({ message: 'Invalid signature' });

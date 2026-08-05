@@ -8,13 +8,13 @@ const router = express.Router();
 
 
 // only accessible by admin
-router.post('/additem', upload.single('image'), isAuthenticated, isAdmin, createMenuItem);
+router.post('/additem/', upload.single('image'), isAuthenticated, isAdmin, createMenuItem);
 router.put('/updateitem/:id', upload.single('image'), isAuthenticated, isAdmin, updateMenuItem);
 router.delete('/removeitem/:id', isAuthenticated, isAdmin, deleteMenuItem);
 
 // for customers 
 router.get('/getmenuitems',getAllMenuItems);
-router.get('/getmenuitem/:id',isAuthenticated,getMenuItemById);
+router.get('/getmenuitem/:restaurant_id',isAuthenticated,getMenuItemById);
 
 
 

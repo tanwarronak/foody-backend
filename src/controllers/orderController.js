@@ -11,7 +11,7 @@ import mongoose from "mongoose";
 export const createOrder = async (req, res) => {
     try {
         const user_id = req.user._id;
-        const { cartId, payment_method } = req.body;
+        const { cartId, payment_method,address } = req.body;
     
         // fetch cart details
         const cart = await Cart_items.findById(cartId).populate('menu.menu_item_id');
@@ -48,7 +48,7 @@ export const createOrder = async (req, res) => {
             delivery_fee: delivery_fee,
             total_amount: total,
             order_status: "pending",
-            delivery_address: user.address, // may need to change it
+            delivery_address: address || user.address, // may need to change it
             estimated_delivery_time: new Date(Date.now() + 40*60*1000) // 30 mins from now
         }
 
@@ -71,6 +71,7 @@ export const createOrder = async (req, res) => {
         const restaurant = await Restaurant.findById(cart.res_id);
         restaurant.orders.push(order._id);
         await restaurant.save();
+        await notifyOwner(orderId,order);
         const razorpayOrder = await razorpayInstance.orders.create(options);
         res.status(201).json({ razorpayOrder, orderId:order._id });
         }
@@ -82,6 +83,12 @@ export const createOrder = async (req, res) => {
            payment_status: "pending"
         });
         await order.save();
+        await Payment.create({
+    order_id: order._id,
+    payment_method: "cod",
+    amount: total,
+    payment_status: "pending"
+});
         // Add order to user's orders list
         user.orders.push(order._id);
         await user.save();
@@ -89,6 +96,7 @@ export const createOrder = async (req, res) => {
         const restaurant = await Restaurant.findById(cart.res_id);
         restaurant.orders.push(order._id);
         await restaurant.save();
+        await notifyOwner(orderId,order);
         res.status(200).json({ message: "Order placed successfully"});
         }
         
@@ -100,102 +108,253 @@ export const createOrder = async (req, res) => {
 
 
 export const getAllOrders = async (req, res) => {
-    try {
-            const user = req.user._id;
-            if(!user){
-                return res.status(404).json({ message: "User not found" });
-            }
-            if(user.role === "customer"){
-                const orders = await Order.aggregate([
-                    {
-                        $match:{user_id: new mongoose.Types.ObjectId(user._id)}
-                    },
-                    {
-                        $lookup:{
-                            from:"restaurants",
-                            localField:"res_id",
-                            foreignField:"_id",
-                            as:"restaurant"
-                        }
-                    },
-                    {
-                        $addFields:{
-                            restaurant_name:{
-                                $first:"$restaurant.r_name"
-                            },
-                            restaurant_description:{
-                                $first:"$restaurant.description"
-                            },
-                            restaurant_contact:{
-                                $first:"$restaurant.phone"
-                            },
-                        }
-                    },
-                    {
-                        $project:{
-                            user_id:1,
-                            items:1,
-                            order_status:1,
-                            restaurant_name:1,
-                            total_amount:1,
-                        }
-                    }
-                ]);
-                if(!orders?.length) return res.status(404).json({message:"oreders not found"})
-                return res.status(200).json(orders);
-                
-            } 
-            if(user.role === "admin"){
-                const restuarant = await Restaurant.findOne({owner_id: user._id});
-                if(!restuarant) return res.status(404).json({message:"Restaurant not found"});
-                const res_id = restuarant._id;
-                const orders = await Order.aggregate([
-                    {
-                        $match:{res_id: new mongoose.Types.ObjectId(res_id)}
-                    },
-                    {
-                         $lookup:{
-                            from:"menu_items",
-                            localField:"items.menu_item_id",
-                            foreignField:"_id",
-                            as:"menu_items"
-                        }
-                    },
-                    {
-                        $addFields:{
-                            items:{
-                                $map:{
-                                    input:"$menu_items",
-                                    as:"item",
-                                    in:{
-                                        menu_item_id:"$$item.name",
-                                        quantity:"$$item.quantity",
-                                        price:"$$item.price"
-                                }
-                            }
-                        }
-                    }},
-                    {
-                        $project:{
-                            items:1,
-                            order_status:1,
-                            subtotal:1,
-                        }
-                    }
-                ]);
-                if(!orders?.length) return res.status(404).json({message:"oreders not found"})
-                res.status(200).json(orders);
-            }
+  try {
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
     }
-    catch(error){
-        res.status(500).json({ message: "Internal server error" });
+
+    // ====================== CUSTOMER ======================
+    if (user.role === "customer") {
+      const orders = await Order.aggregate([
+        {
+          $match: {
+            user_id: new mongoose.Types.ObjectId(user._id),
+          },
+        },
+
+        {
+          $lookup: {
+            from: "restaurants",
+            localField: "res_id",
+            foreignField: "_id",
+            as: "restaurant",
+          },
+        },
+
+        {
+          $lookup: {
+            from: "menu_items",
+            localField: "items.menu_item_id",
+            foreignField: "_id",
+            as: "menuItems",
+          },
+        },
+
+        {
+          $project: {
+            _id: 1,
+
+            restaurantName: {
+              $first: "$restaurant.r_name",
+            },
+
+            restaurantId: "$res_id",
+
+            items: {
+              $map: {
+                input: "$items",
+                as: "item",
+                in: {
+                  restaurantId: "$res_id",
+
+                  menu_item_id: "$$item.menu_item_id",
+
+                  quantity: "$$item.quantity",
+
+                  price: "$$item.price",
+
+                  name: {
+                    $let: {
+                      vars: {
+                        menu: {
+                          $first: {
+                            $filter: {
+                              input: "$menuItems",
+                              as: "m",
+                              cond: {
+                                $eq: [
+                                  "$$m._id",
+                                  "$$item.menu_item_id",
+                                ],
+                              },
+                            },
+                          },
+                        },
+                      },
+                      in: "$$menu.name",
+                    },
+                  },
+                },
+              },
+            },
+
+            subtotal: 1,
+
+            deliveryFee: "$delivery_fee",
+
+            platformFee: "$platform_fee",
+
+            total: "$total_amount",
+
+            status: "$order_status",
+
+            payment_status: 1,
+
+            payment_method: 1,
+
+            address: "$delivery_address",
+
+            createdAt: 1,
+          },
+        },
+
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+      ]);
+
+      return res.status(200).json(orders);
     }
+
+    // ====================== RESTAURANT OWNER ======================
+    if (user.role === "admin") {
+      const restaurant = await Restaurant.findOne({
+        owner_id: user._id,
+      });
+
+      if (!restaurant) {
+        return res.status(404).json({
+          message: "Restaurant not found",
+        });
+      }
+
+      const orders = await Order.aggregate([
+        {
+          $match: {
+            res_id: restaurant._id,
+          },
+        },
+
+        {
+          $lookup: {
+            from: "users",
+            localField: "user_id",
+            foreignField: "_id",
+            as: "customer",
+          },
+        },
+
+        {
+          $lookup: {
+            from: "menu_items",
+            localField: "items.menu_item_id",
+            foreignField: "_id",
+            as: "menuItems",
+          },
+        },
+
+        {
+          $project: {
+            _id: 1,
+
+            customerName: {
+              $first: "$customer.name",
+            },
+
+            customerPhone: {
+              $first: "$customer.phone",
+            },
+
+            items: {
+              $map: {
+                input: "$items",
+                as: "item",
+                in: {
+                  menu_item_id: "$$item.menu_item_id",
+
+                  quantity: "$$item.quantity",
+
+                  price: "$$item.price",
+
+                  name: {
+                    $let: {
+                      vars: {
+                        menu: {
+                          $first: {
+                            $filter: {
+                              input: "$menuItems",
+                              as: "m",
+                              cond: {
+                                $eq: [
+                                  "$$m._id",
+                                  "$$item.menu_item_id",
+                                ],
+                              },
+                            },
+                          },
+                        },
+                      },
+                      in: "$$menu.name",
+                    },
+                  },
+                },
+              },
+            },
+
+            subtotal: 1,
+
+            deliveryFee: "$delivery_fee",
+
+            platformFee: "$platform_fee",
+
+            total: "$total_amount",
+
+            status: "$order_status",
+
+            payment_status: 1,
+
+            payment_method: 1,
+
+            address: "$delivery_address",
+
+            createdAt: 1,
+
+            estimated_delivery_time: 1,
+          },
+        },
+
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+      ]);
+
+      return res.status(200).json(orders);
+    }
+
+    return res.status(403).json({
+      message: "Access denied",
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
 };
 
 
 export const getOrderById = async (req, res) => {
     try {
-            const user = req.user._id;
+            const user = req.user;
             const orderId = req.params.id;
             if(!user){
                 return res.status(404).json({ message: "User not found" });
@@ -307,21 +466,22 @@ export const getOrderById = async (req, res) => {
                             customer_name:{
                                 $first:"$customer.name"
                             },
-                            items:{
-                                $map:{
-                                    input:"$menu_items",
-                                    as:"item",
-                                    in:{
-                                        menu_item_id:"$$item.name",
-                                        quantity:"$$item.quantity",
-                                        price:"$$item.price"
-                                }
-                            }
-                        }
+                            menu_items:{
+    $map:{
+        input:"$menu_items",
+        as:"menu_item",
+        in:{
+            name:"$$menu_item.name",
+            description:"$$menu_item.description",
+            price:"$$menu_item.price",
+            category:"$$menu_item.category",
+        }
+    }
+}
                     }},
                     {
                         $project:{
-                            items:1,
+                            menu_items:1,
                             payment_status:1,
                             customer_name:1,
                             order_status:1,
@@ -331,8 +491,13 @@ export const getOrderById = async (req, res) => {
                         }
                     }
                 ])
-                if(!order) return res.status(404).json({message:"order not found"})
-                res.status(200).json(order);
+                if (!order.length) {
+  return res.status(404).json({
+    message: "Order not found",
+  });
+}
+
+return res.status(200).json(order[0]);
             }
     }
     catch(error){
@@ -418,9 +583,6 @@ export const updateOrderStatus = async (req, res) => {
                     }
                 }
             ]);
-            if(newStatus==="accepted"||newStatus==="preparing"){
-            await notifyOwner(orderId,orderData[0]);
-            }
             await order.save();
             res.status(200).json({message:"Order status updated successfully"});
     }

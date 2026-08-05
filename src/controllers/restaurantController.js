@@ -6,14 +6,13 @@ import AzureStorageService from '../services/azureStorageService.js';
 // create a new restaurant
 export const createRestaurant = async (req, res) => {
         try{
+
             const {name,  description, phone, email,address, opening_time, closing_time} = req.body;
-            const owner_id = req.user._id;   // it may create problem
+            const owner_id = "6a281020d3912b1ba75fd6e5";   // it may create problem
             const image = req.file; 
-            console.log(image);
             if(String(phone).length!==10) return res.status(400).json({
             message:'Phone number should be of 10 digits'
          });
-
         const blobName = await AzureStorageService.upload(image, process.env.AZURE_STORAGE_RESTAURANT_CONTAINER_NAME);
 
         let imageUrl =  AzureStorageService.generateReadUrl(blobName, process.env.AZURE_STORAGE_RESTAURANT_CONTAINER_NAME);

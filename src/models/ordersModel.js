@@ -73,7 +73,11 @@ const orderSchema = new mongoose.Schema({
     estimated_delivery_time:{
         type:Date,      
     }
-});
+},
+{
+    timestamps: true
+}
+);
 
 export const Order = mongoose.model("Order", orderSchema);
 

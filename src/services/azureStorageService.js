@@ -12,14 +12,14 @@ import { blobServiceClient } from "../config/azureStorageConfig.js";
 import { v4 as uuid } from "uuid";
 
 const credential = new StorageSharedKeyCredential(
-    process.env.AZURE_STORAGE_ACCOUNT,
+    process.env.AZURE_STORAGE_ACCOUNT_NAME,
     process.env.AZURE_STORAGE_ACCOUNT_KEY
 );
 
 class AzureStorageService {
 
     async upload(file, containerName) {
-
+       try {
         const containerClient =
             blobServiceClient.getContainerClient(containerName);
         const extension = file.originalname.split(".").pop();
@@ -35,6 +35,11 @@ class AzureStorageService {
         );
 
         return blobName;
+       }
+       catch(error){
+        console.error('Error uploading file to Azure Blob Storage:', error);
+        throw new Error('Failed to upload file to Azure Blob Storage');
+       }
     }
 
     generateReadUrl(blobName, containerName) {
@@ -55,7 +60,7 @@ class AzureStorageService {
                 credential
             ).toString();
 
-        return `https://${process.env.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/${containerName}/${blobName}?${sas}`;
+        return `https://${process.env.AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${containerName}/${blobName}?${sas}`;
     }
 
     async delete(blobName, containerName) {
