@@ -11,98 +11,212 @@ import mongoose from "mongoose";
 export const createOrder = async (req, res) => {
     try {
         const user_id = req.user._id;
-        const { cartId, payment_method,address,phone } = req.body;
-    
-        // fetch cart details
-        const cart = await Cart_items.findById(cartId).populate('menu.menu_item_id');
-        if(!cart || cart.user_id.toString() !== user_id.toString()){
-            return res.status(404).json({ message: "Cart not found" });
-        }; // this portion is giving errors frequently, need to check it once again
+        const { cartId, payment_method, address, phone } = req.body;
 
-        // create order
+        // Validate payment method
+        if (!["online", "cod"].includes(payment_method)) {
+            return res.status(400).json({
+                message: "Invalid payment method"
+            });
+        }
+
+        // Fetch cart details
+        const cart = await Cart_items
+            .findById(cartId)
+            .populate("menu.menu_item_id");
+
+        if (!cart) {
+            return res.status(404).json({
+                message: "Cart not found"
+            });
+        }
+
+        // Check cart belongs to logged-in user
+        if (cart.user_id.toString() !== user_id.toString()) {
+            return res.status(403).json({
+                message: "You are not authorized to use this cart"
+            });
+        }
+
+        // Check cart is not empty
+        if (!cart.menu || cart.menu.length === 0) {
+            return res.status(400).json({
+                message: "Cart is empty"
+            });
+        }
+
+        // Check if any menu item is missing after populate
+        const invalidItem = cart.menu.find(
+            item => !item.menu_item_id
+        );
+
+        if (invalidItem) {
+            return res.status(400).json({
+                message: "One or more menu items are no longer available"
+            });
+        }
+
+        // Create order items
         const orderItems = cart.menu.map(item => ({
             menu_item_id: item.menu_item_id._id,
-	name: item.menu_item_id.name,
+            name: item.menu_item_id.name,
             quantity: item.quantity,
             price: item.menu_item_id.price
         }));
 
-        // calculate subtotal, platform_fee, delivery_fee and total
-        let subtotal = orderItems.reduce((total, item)=> total + (item.quantity * item.price), 0);
-        let platform_fee = 9;
-        let delivery_fee = 19;
-        let total = subtotal + platform_fee + delivery_fee;
+        // Calculate subtotal, platform fee, delivery fee and total
+        const subtotal = orderItems.reduce(
+            (total, item) =>
+                total + (item.quantity * item.price),
+            0
+        );
 
-        // check if order is already placed for the same cart
+        const platform_fee = 9;
+        const delivery_fee = 19;
+        const total = subtotal + platform_fee + delivery_fee;
+
+        // Get user
         const user = await User.findById(user_id);
 
-        let orderOptions ={
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        // Get restaurant
+        const restaurant = await Restaurant.findById(cart.res_id);
+
+        if (!restaurant) {
+            return res.status(404).json({
+                message: "Restaurant not found"
+            });
+        }
+
+        // Common order options
+        const orderOptions = {
             user_id: user_id,
-            res_id:cart.res_id,
+            res_id: cart.res_id,
             items: orderItems,
             subtotal: subtotal,
             platform_fee: platform_fee,
             delivery_fee: delivery_fee,
             total_amount: total,
             order_status: "pending",
-            delivery_address: address || user.address, // may need to change it
-            estimated_delivery_time: new Date(Date.now() + 40*60*1000) // 30 mins from now
-        }	
-	
-
-        if(payment_method === "online"){
-            let options = {
-            amount: total * 100, // 1 INR = 100 paise
-            currency: "INR",
-            receipt: `receipt_${Date.now()}`,
+            delivery_address: address || user.address,
+            estimated_delivery_time: new Date(
+                Date.now() + 40 * 60 * 1000
+            )
         };
-        const order = new Order({
-           ...orderOptions,
-           payment_method: "online",
-           payment_status: "pending"
-        });
-        await order.save();
-        // Add order to user's orders list
-        user.orders.push(order._id);
-        await user.save();
-        // Add order to restaurant's orders list
-        const restaurant = await Restaurant.findById(cart.res_id);
-        restaurant.orders.push(order._id);
-        await restaurant.save();
-        await notifyOwner(order._id,user.name,restaurant.r_name,phone,address,order);
-        const razorpayOrder = await razorpayInstance.orders.create(options);
-        res.status(201).json({ razorpayOrder, orderId:order._id });
+
+        // =========================================================
+        // ONLINE PAYMENT
+        // =========================================================
+
+        if (payment_method === "online") {
+
+            // Create Razorpay order FIRST
+            const razorpayOptions = {
+                amount: Math.round(total * 100),
+                currency: "INR",
+                receipt: `receipt_${Date.now()}`
+            };
+
+            const razorpayOrder =
+                await razorpayInstance.orders.create(
+                    razorpayOptions
+                );
+
+            // Create Foody order
+            const order = new Order({
+                ...orderOptions,
+                payment_method: "online",
+                payment_status: "pending"
+            });
+
+            await order.save();
+
+            // Add order to user's orders
+            user.orders.push(order._id);
+            await user.save();
+
+            // Add order to restaurant's orders
+            restaurant.orders.push(order._id);
+            await restaurant.save();
+
+            // Notify restaurant
+            await notifyOwner(
+                order._id,
+                user.name,
+                restaurant.r_name,
+                phone,
+                address,
+                order
+            );
+
+            // Send Razorpay order details to frontend
+            return res.status(201).json({
+                message: "Razorpay order created",
+                orderId: order._id,
+                razorpayOrder: razorpayOrder
+            });
         }
 
-        if(payment_method === "cod"){
+        // =========================================================
+        // CASH ON DELIVERY
+        // =========================================================
+
+        if (payment_method === "cod") {
+
+            // Create Foody order
             const order = new Order({
-           ...orderOptions,
-           payment_method: "cod",
-           payment_status: "pending"
-        });
-        await order.save();
-        await Payment.create({
-    order_id: order._id,
-    payment_method: "cod",
-    amount: total,
-payment_order_id:`COD_${Date.now()}`,
-transaction_id:`COD_${Date.now()}`,
-    payment_status: "pending"
-});
-        // Add order to user's orders list
-        user.orders.push(order._id);
-        await user.save();
-        // Add order to restaurant's orders list
-        const restaurant = await Restaurant.findById(cart.res_id);
-        restaurant.orders.push(order._id);
-        await restaurant.save();
-        await notifyOwner(order._id,user.name,restaurant.r_name,phone,address,order);
-        res.status(200).json({ message: "Order placed successfully"});
+                ...orderOptions,
+                payment_method: "cod",
+                payment_status: "pending"
+            });
+
+            await order.save();
+
+            // Create COD payment record
+            await Payment.create({
+                order_id: order._id,
+                payment_method: "cod",
+                amount: total,
+                payment_order_id: `COD_${Date.now()}`,
+                transaction_id: `COD_${Date.now()}`,
+                payment_status: "pending"
+            });
+
+            // Add order to user's orders
+            user.orders.push(order._id);
+            await user.save();
+
+            // Add order to restaurant's orders
+            restaurant.orders.push(order._id);
+            await restaurant.save();
+
+            // Notify restaurant
+            await notifyOwner(
+                order._id,
+                user.name,
+                restaurant.r_name,
+                phone,
+                address,
+                order
+            );
+
+            return res.status(201).json({
+                message: "Order placed successfully",
+                orderId: order._id
+            });
         }
-        
-    }
-    catch(error){
-        res.status(500).json({ message:error.message });
+
+    } catch (error) {
+        console.error("Create order error:", error);
+
+        return res.status(500).json({
+            message: error.message
+        });
     }
 };
 
