@@ -71,8 +71,8 @@ export const createOrder = async (req, res) => {
             0
         );
 
-        const platform_fee = 9;
-        const delivery_fee = 19;
+        const platform_fee = 11;
+        const delivery_fee = 21;
         const total = subtotal + platform_fee + delivery_fee;
 
         // Get user
