@@ -14,9 +14,6 @@ export const createMenuItem = async (req,res)=>{
 
         // need to put a check to see if menu item with same name already exists for that restaurant
         if(!restaurant) return res.status(404).json({message:'restaurant not found'});
-
-        const blobName = await AzureStorageService.upload(image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
-        const imageUrl = AzureStorageService.generateReadUrl(blobName, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
         
 
        const newMenuItem =  await new Menu_item({
@@ -25,10 +22,10 @@ export const createMenuItem = async (req,res)=>{
             description,
             price,
             category,
-            image: blobName
+            image: 'lol'
         });
         await newMenuItem.save();
-        res.status(200).json({message:'item added successfully',menuItem: newMenuItem, imageUrl});
+        res.status(200).json({message:'item added successfully',menuItem: newMenuItem});
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
@@ -42,10 +39,6 @@ export const updateMenuItem = async (req,res)=>{
        const updatedMenuItem =  await Menu_item.findByIdAndUpdate(req.params.id,
             {name, description, price, category},{returnDocument:'after'});
             if(!updatedMenuItem) res.status(404).json({message:'item not found'});
-            updatedMenuItem.image = AzureStorageService.replace(
-                updatedMenuItem.image,
-                image,
-                process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
                 await updatedMenuItem.save();
             res.status(200).json({
                 message:'menu item updated successfully',
@@ -63,7 +56,6 @@ export const deleteMenuItem = async (req,res)=>{
         if(!deletedMenuItem) res.status(404).json({
             message:'item not found'
         });
-         await AzureStorageService.delete(deletedMenuItem.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
         res.status(200).json({message:'menu item removed successfully',
         deletedMenuItem
         });
@@ -82,7 +74,7 @@ export const getAllMenuItems = async (req,res)=>{
         const response = menuList.map(item => {
             return {
                 ...item.toObject(),
-                image: AzureStorageService.generateReadUrl(item.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME)
+                image: 'lol'
             };
         });
         res.status(200).json({menuList: response})
@@ -104,5 +96,3 @@ export const getMenuItemById = async (req,res)=>{
         res.status(500).json({message: 'Server error', error: error.message})
     }
 };
-
-

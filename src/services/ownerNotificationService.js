@@ -1,23 +1,27 @@
 import TelegramBot from 'node-telegram-bot-api';
 
-export const notifyOwner = async (orderId,orderData) => {
+export const notifyOwner = async (order_id,user_name,restaurant_name,phone,address,orderData) => {
     try{
+
+	const itemsMessage = orderData.items
+    .map(item => `${item.name} x ${item.quantity} - ₹${item.price}`)
+    .join("\n");
+
         const notificationMessage =  `
             ✨ *📥 New Order Received!* ✨
             \-----------------------------
-            🆔 *Order ID:* \`${orderId}\`
+            🆔 *Order items:* \`${itemsMessage}\`
             📌 *Status:* ${orderData.order_status}
             💳 *Payment Method:* ${orderData.payment_method}
             💰 *Total Amount:* \$${orderData.total_amount}
 
             🏪 *Restaurant Details:*
-            🍽 *Name:* ${orderData.restaurant_name}
-            📞 *Contact:* ${orderData.restaurant_contact}
+            🍽 *Name:* ${restaurant_name}
 
             👤 *Customer Details:*
-            👤 *Name:* ${orderData.customer_name}
-            📞 *Contact:* ${orderData.customer_contact}
-            📍 *Address:* ${orderData.customer_address}`.trim();
+            👤 *Name:* ${user_name}
+            📞 *Contact:* ${phone}
+            📍 *Address:* ${address}`.trim();
         const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
         let options = {

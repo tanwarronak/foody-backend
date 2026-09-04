@@ -6,10 +6,15 @@ import passport from 'passport';
 import session from 'express-session';
 import setupGoogleAuth from './src/utils/googleAuth.js';
 import rateLimit from 'express-rate-limit';
+import { RedisStore } from "connect-redis";
+import redisClient from "./src/config/redis.js";
+
 
 const config = dotenv.config();
 
 const app = express();
+
+app.set("trust proxy", 1);
 
 const limiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
@@ -19,19 +24,48 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
+await redisClient.connect();
+
+const redisStore = new RedisStore({
+    client: redisClient,
+    prefix: "foody:"
+});
+
 setupGoogleAuth();
 
 // middlewares
-app.use(cors({ origin: "*" })); //change it later to allow only specific origins
+app.use(
+  cors({
+    origin: [
+      "https://foody.monster",
+      "http://10.60.31.231:3000",
+    ],
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({extended:true}));
+
 app.use(session({
+    store: redisStore,
+
     secret: process.env.JWT_SECRET,
+
     resave: false,
-    saveUninitialized: false
+    saveUninitialized: false,
+
+    cookie: {
+        secure: true,
+        httpOnly: true,
+        sameSite: "none",
+        maxAge: 1000 * 60 * 60 * 24 * 7
+    }
 }));
+
+
 app.use(passport.initialize());
 app.use(passport.session());
+
 
 
 // connect to db

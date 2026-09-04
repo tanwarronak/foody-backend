@@ -5,10 +5,10 @@ const paymentSchema = new mongoose.Schema({
             type:mongoose.Schema.Types.ObjectId,
             ref:'Order',
         },
-        payment_order_id:{
-            type:String,
-            unique:true
-        },
+	payment_order_id: {
+    	type: String,
+    	sparse: true
+	},
         payment_method:{
             type:String,
             enum:['online','cod'],
@@ -23,10 +23,10 @@ const paymentSchema = new mongoose.Schema({
             enum:["pending","paid","failed"],
             default:"pending"
         },
-        transaction_id:{
-            type:String,
-            unique:true
-        },
+	transaction_id: {
+    type: String,
+    sparse: true
+	},
         paid_at:{
             type:Date
         }
