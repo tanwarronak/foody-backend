@@ -20,7 +20,7 @@ export const createOrder = async (req, res) => {
             });
         }
 
-        // Fetch cart details
+        // Fetch cart
         const cart = await Cart_items
             .findById(cartId)
             .populate("menu.menu_item_id");
@@ -31,7 +31,7 @@ export const createOrder = async (req, res) => {
             });
         }
 
-        // Check cart belongs to logged-in user
+        // Check cart ownership
         if (cart.user_id.toString() !== user_id.toString()) {
             return res.status(403).json({
                 message: "You are not authorized to use this cart"
@@ -45,7 +45,7 @@ export const createOrder = async (req, res) => {
             });
         }
 
-        // Check if any menu item is missing after populate
+        // Check menu items
         const invalidItem = cart.menu.find(
             item => !item.menu_item_id
         );
@@ -55,25 +55,6 @@ export const createOrder = async (req, res) => {
                 message: "One or more menu items are no longer available"
             });
         }
-
-        // Create order items
-        const orderItems = cart.menu.map(item => ({
-            menu_item_id: item.menu_item_id._id,
-            name: item.menu_item_id.name,
-            quantity: item.quantity,
-            price: item.menu_item_id.price
-        }));
-
-        // Calculate subtotal, platform fee, delivery fee and total
-        const subtotal = orderItems.reduce(
-            (total, item) =>
-                total + (item.quantity * item.price),
-            0
-        );
-
-        const platform_fee = 11;
-        const delivery_fee = 21;
-        const total = subtotal + platform_fee + delivery_fee;
 
         // Get user
         const user = await User.findById(user_id);
@@ -93,21 +74,24 @@ export const createOrder = async (req, res) => {
             });
         }
 
-        // Common order options
-        const orderOptions = {
-            user_id: user_id,
-            res_id: cart.res_id,
-            items: orderItems,
-            subtotal: subtotal,
-            platform_fee: platform_fee,
-            delivery_fee: delivery_fee,
-            total_amount: total,
-            order_status: "pending",
-            delivery_address: address || user.address,
-            estimated_delivery_time: new Date(
-                Date.now() + 40 * 60 * 1000
-            )
-        };
+        // Create order items
+        const orderItems = cart.menu.map(item => ({
+            menu_item_id: item.menu_item_id._id,
+            name: item.menu_item_id.name,
+            quantity: item.quantity,
+            price: item.menu_item_id.price
+        }));
+
+        // Calculate amount
+        const subtotal = orderItems.reduce(
+            (total, item) =>
+                total + (item.quantity * item.price),
+            0
+        );
+
+        const platform_fee = 11;
+        const delivery_fee = 21;
+        const total = subtotal + platform_fee + delivery_fee;
 
         // =========================================================
         // ONLINE PAYMENT
@@ -115,7 +99,7 @@ export const createOrder = async (req, res) => {
 
         if (payment_method === "online") {
 
-            // Create Razorpay order FIRST
+            // Create ONLY Razorpay order
             const razorpayOptions = {
                 amount: Math.round(total * 100),
                 currency: "INR",
@@ -127,38 +111,30 @@ export const createOrder = async (req, res) => {
                     razorpayOptions
                 );
 
-            // Create Foody order
-            const order = new Order({
-                ...orderOptions,
-                payment_method: "online",
-                payment_status: "pending"
-            });
+            /*
+             * IMPORTANT:
+             * Do NOT create Foody Order here.
+             *
+             * The Foody order will be created only after
+             * Razorpay payment is successfully verified.
+             */
 
-            await order.save();
-
-            // Add order to user's orders
-            user.orders.push(order._id);
-            await user.save();
-
-            // Add order to restaurant's orders
-            restaurant.orders.push(order._id);
-            await restaurant.save();
-
-            // Notify restaurant
-            await notifyOwner(
-                order._id,
-                user.name,
-                restaurant.r_name,
-                phone,
-                address,
-                order
-            );
-
-            // Send Razorpay order details to frontend
             return res.status(201).json({
                 message: "Razorpay order created",
-                orderId: order._id,
-                razorpayOrder: razorpayOrder
+                razorpayOrder: razorpayOrder,
+
+                // Send the information needed later
+                checkoutData: {
+                    cartId: cart._id,
+                    address: address || user.address,
+                    phone: phone,
+                    userId: user_id,
+                    restaurantId: cart.res_id,
+                    subtotal,
+                    platform_fee,
+                    delivery_fee,
+                    total
+                }
             });
         }
 
@@ -168,12 +144,25 @@ export const createOrder = async (req, res) => {
 
         if (payment_method === "cod") {
 
-            // Create Foody order
-            const order = new Order({
-                ...orderOptions,
+            const orderOptions = {
+                user_id: user_id,
+                res_id: cart.res_id,
+                items: orderItems,
+                subtotal: subtotal,
+                platform_fee: platform_fee,
+                delivery_fee: delivery_fee,
+                total_amount: total,
+                order_status: "pending",
                 payment_method: "cod",
-                payment_status: "pending"
-            });
+                payment_status: "pending",
+                delivery_address: address || user.address,
+                estimated_delivery_time: new Date(
+                    Date.now() + 40 * 60 * 1000
+                )
+            };
+
+            // Create Foody order
+            const order = new Order(orderOptions);
 
             await order.save();
 
@@ -187,11 +176,11 @@ export const createOrder = async (req, res) => {
                 payment_status: "pending"
             });
 
-            // Add order to user's orders
+            // Add order to user
             user.orders.push(order._id);
             await user.save();
 
-            // Add order to restaurant's orders
+            // Add order to restaurant
             restaurant.orders.push(order._id);
             await restaurant.save();
 
