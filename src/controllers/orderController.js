@@ -132,8 +132,8 @@ export const createOrder = async (req, res) => {
             0
         );
 
-        const platform_fee = 0;
-        const delivery_fee = 0;
+        const platform_fee = 11;
+        const delivery_fee = 21;
 
         const total =
             subtotal +
