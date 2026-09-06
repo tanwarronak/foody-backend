@@ -1,41 +1,47 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const paymentSchema = new mongoose.Schema({
-        order_id:{
-            type:mongoose.Schema.Types.ObjectId,
-            ref:'Order',
-        },
-	payment_order_id: {
-    	type: String,
-    	sparse: true
-	},
-        payment_method:{
-            type:String,
-            enum:['online','cod'],
-            required:true
-        },
-        amount:{
-            type:Number,
-            required:true
-        },
-        payment_status:{
-            type:String,
-            enum:["pending","paid","failed"],
-            default:"pending"
-        },
-	transaction_id: {
-    type: String,
-    default: null,
-    unique: true,
-    sparse: true
-},
-        paid_at:{
-            type:Date
-        }
+    order_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Order",
+    },
+
+    payment_order_id: {
+        type: String,
+        sparse: true
+    },
+
+    payment_method: {
+        type: String,
+        enum: ["online", "cod"],
+        required: true
+    },
+
+    amount: {
+        type: Number,
+        required: true
+    },
+
+    payment_status: {
+        type: String,
+        enum: ["pending", "paid", "failed"],
+        default: "pending"
+    },
+
+    transaction_id: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+
+    paid_at: {
+        type: Date
+    }
 });
 
+export const Payment = mongoose.model("Payment", paymentSchema);
 
-export const Payment = mongoose.model('Payment',paymentSchema);
+
 
 
 
