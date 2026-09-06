@@ -5,6 +5,7 @@ import { Cart_items } from "../models/cartModel.js";
 import { razorpayInstance } from "../config/razorpayConfig.js";
 import { Payment } from "../models/paymentModel.js";
 import { notifyOwner } from "../services/ownerNotificationService.js";
+import mongoose from "mongoose";
 
 export const createOrder = async (req, res) => {
     try {
