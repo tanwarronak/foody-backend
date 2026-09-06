@@ -163,12 +163,11 @@ export const createOrder = async (req, res) => {
             // -----------------------------------------------------
             // CREATE FOODY ORDER
             //
-            // Payment is initially pending because Razorpay
-            // payment has not happened yet.
+            // Payment has not happened yet.
             // -----------------------------------------------------
 
             const order = new Order({
-                user_id: user_id,
+                user_id,
 
                 res_id: cart.res_id,
 
@@ -180,11 +179,11 @@ export const createOrder = async (req, res) => {
 
                 payment_status: "pending",
 
-                subtotal: subtotal,
+                subtotal,
 
-                platform_fee: platform_fee,
+                platform_fee,
 
-                delivery_fee: delivery_fee,
+                delivery_fee,
 
                 total_amount: total,
 
@@ -202,9 +201,6 @@ export const createOrder = async (req, res) => {
 
             // -----------------------------------------------------
             // CREATE PAYMENT RECORD
-            //
-            // Razorpay payment ID does not exist yet.
-            // We store the Razorpay ORDER ID.
             // -----------------------------------------------------
 
             await Payment.create({
@@ -272,10 +268,17 @@ export const createOrder = async (req, res) => {
                     order._id,
 
                 razorpayOrder: {
-                    id: razorpayOrder.id,
-                    amount: razorpayOrder.amount,
-                    currency: razorpayOrder.currency,
-                    receipt: razorpayOrder.receipt
+                    id:
+                        razorpayOrder.id,
+
+                    amount:
+                        razorpayOrder.amount,
+
+                    currency:
+                        razorpayOrder.currency,
+
+                    receipt:
+                        razorpayOrder.receipt
                 }
             });
         }
@@ -287,31 +290,25 @@ export const createOrder = async (req, res) => {
         if (payment_method === "cod") {
 
             const order = new Order({
-                user_id: user_id,
+                user_id,
 
                 res_id: cart.res_id,
 
                 items: orderItems,
 
-                subtotal: subtotal,
+                subtotal,
 
-                platform_fee:
-                    platform_fee,
+                platform_fee,
 
-                delivery_fee:
-                    delivery_fee,
+                delivery_fee,
 
-                total_amount:
-                    total,
+                total_amount: total,
 
-                order_status:
-                    "pending",
+                order_status: "pending",
 
-                payment_method:
-                    "cod",
+                payment_method: "cod",
 
-                payment_status:
-                    "pending",
+                payment_status: "pending",
 
                 delivery_address:
                     address || user.address,
@@ -326,10 +323,11 @@ export const createOrder = async (req, res) => {
             await order.save();
 
             // -----------------------------------------------------
-            // CREATE COD PAYMENT RECORD
+            // CREATE COD PAYMENT
             // -----------------------------------------------------
 
-            const codId = `COD_${Date.now()}`;
+            const codId =
+                `COD_${Date.now()}`;
 
             await Payment.create({
                 order_id:
