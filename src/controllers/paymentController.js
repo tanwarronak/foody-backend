@@ -1,7 +1,11 @@
-import {razorpayInstance} from "../config/razorpayConfig.js";
-import {Order} from "../models/ordersModel.js";
+import { razorpayInstance } from "../config/razorpayConfig.js";
+import { Order } from "../models/ordersModel.js";
+import { Payment } from "../models/paymentModel.js";
+import { Cart_items } from "../models/cartModel.js";
+import { User } from "../models/userModel.js";
+import { Restaurant } from "../models/restaurantModel.js";
+import { notifyOwner } from "../services/ownerNotificationService.js";
 import crypto from "crypto";
-import {Payment} from "../models/paymentModel.js";
 
 export const verifyOrder = async (req, res) => {
     try {
@@ -16,19 +20,39 @@ export const verifyOrder = async (req, res) => {
 
         const user_id = req.user._id;
 
-        // Validate Razorpay response
+        // =========================================================
+        // 1. VALIDATE REQUEST
+        // =========================================================
+
         if (
             !razorpay_order_id ||
             !razorpay_payment_id ||
-            !razorpay_signature
+            !razorpay_signature ||
+            !cartId
         ) {
             return res.status(400).json({
-                message: "Invalid Razorpay payment response"
+                message: "Invalid payment verification data"
             });
         }
 
         // =========================================================
-        // VERIFY RAZORPAY SIGNATURE
+        // 2. CHECK IF PAYMENT WAS ALREADY PROCESSED
+        // =========================================================
+
+        const existingPayment = await Payment.findOne({
+            transaction_id: razorpay_payment_id
+        });
+
+        if (existingPayment) {
+            return res.status(200).json({
+                message: "Payment already processed",
+                verified: true,
+                orderId: existingPayment.order_id
+            });
+        }
+
+        // =========================================================
+        // 3. VERIFY RAZORPAY SIGNATURE
         // =========================================================
 
         const body =
@@ -36,23 +60,44 @@ export const verifyOrder = async (req, res) => {
             "|" +
             razorpay_payment_id;
 
-        const expectedSignature =
-            crypto
-                .createHmac(
-                    "sha256",
-                    process.env.RAZORPAY_KEY_SECRET
-                )
-                .update(body)
-                .digest("hex");
+        const expectedSignature = crypto
+            .createHmac(
+                "sha256",
+                process.env.RAZORPAY_KEY_SECRET
+            )
+            .update(body)
+            .digest("hex");
 
-        if (expectedSignature !== razorpay_signature) {
+        if (
+            !crypto.timingSafeEqual(
+                Buffer.from(expectedSignature),
+                Buffer.from(razorpay_signature)
+            )
+        ) {
             return res.status(400).json({
-                message: "Invalid payment signature"
+                message: "Invalid payment signature",
+                verified: false
             });
         }
 
         // =========================================================
-        // FETCH CART AGAIN
+        // 4. FETCH RAZORPAY ORDER
+        // =========================================================
+
+        const razorpayOrder =
+            await razorpayInstance.orders.fetch(
+                razorpay_order_id
+            );
+
+        if (!razorpayOrder) {
+            return res.status(404).json({
+                message: "Razorpay order not found",
+                verified: false
+            });
+        }
+
+        // =========================================================
+        // 5. FETCH CART
         // =========================================================
 
         const cart = await Cart_items
@@ -61,61 +106,78 @@ export const verifyOrder = async (req, res) => {
 
         if (!cart) {
             return res.status(404).json({
-                message: "Cart not found"
+                message: "Cart not found",
+                verified: false
             });
         }
 
-        // Make sure cart belongs to logged-in user
-        if (cart.user_id.toString() !== user_id.toString()) {
+        // =========================================================
+        // 6. VERIFY CART OWNERSHIP
+        // =========================================================
+
+        if (
+            cart.user_id.toString() !==
+            user_id.toString()
+        ) {
             return res.status(403).json({
-                message: "You are not authorized to use this cart"
+                message: "You are not authorized to use this cart",
+                verified: false
             });
         }
 
-        // Check cart
+        // =========================================================
+        // 7. VALIDATE CART
+        // =========================================================
+
         if (!cart.menu || cart.menu.length === 0) {
             return res.status(400).json({
-                message: "Cart is empty"
+                message: "Cart is empty",
+                verified: false
             });
         }
 
-        // Check menu items
         const invalidItem = cart.menu.find(
             item => !item.menu_item_id
         );
 
         if (invalidItem) {
             return res.status(400).json({
-                message: "One or more menu items are no longer available"
+                message:
+                    "One or more menu items are no longer available",
+                verified: false
             });
         }
 
         // =========================================================
-        // GET USER
+        // 8. GET USER
         // =========================================================
 
         const user = await User.findById(user_id);
 
         if (!user) {
             return res.status(404).json({
-                message: "User not found"
+                message: "User not found",
+                verified: false
             });
         }
 
         // =========================================================
-        // GET RESTAURANT
+        // 9. GET RESTAURANT
         // =========================================================
 
-        const restaurant = await Restaurant.findById(cart.res_id);
+        const restaurant = await Restaurant.findById(
+            cart.res_id
+        );
 
         if (!restaurant) {
             return res.status(404).json({
-                message: "Restaurant not found"
+                message: "Restaurant not found",
+                verified: false
             });
         }
 
         // =========================================================
-        // CREATE ORDER ITEMS
+        // 10. CREATE ORDER ITEMS
         // =========================================================
 
         const orderItems = cart.menu.map(item => ({
@@ -126,26 +188,73 @@ export const verifyOrder = async (req, res) => {
         }));
 
         // =========================================================
-        // CALCULATE TOTAL
+        // 11. CALCULATE TOTAL
         // =========================================================
 
         const subtotal = orderItems.reduce(
             (total, item) =>
-                total + (item.quantity * item.price),
+                total +
+                item.quantity * item.price,
             0
         );
 
         const platform_fee = 11;
         const delivery_fee = 21;
-        const total = subtotal + platform_fee + delivery_fee;
+
+        const total =
+            subtotal +
+            platform_fee +
+            delivery_fee;
 
         // =========================================================
-        // CREATE FOODY ORDER
+        // 12. VERIFY RAZORPAY AMOUNT
+        // =========================================================
+
+        const expectedAmount = Math.round(
+            total * 100
+        );
+
+        if (
+            Number(razorpayOrder.amount) !==
+            expectedAmount
+        ) {
+            console.error(
+                "Payment amount mismatch:",
+                {
+                    razorpayAmount:
+                        razorpayOrder.amount,
+                    expectedAmount
+                }
+            );
+
+            return res.status(400).json({
+                message: "Payment amount mismatch",
+                verified: false
+            });
+        }
+
+        // =========================================================
+        // 13. VERIFY RAZORPAY ORDER STATUS
+        // =========================================================
+
+        if (
+            razorpayOrder.status !== "paid" &&
+            razorpayOrder.status !== "attempted"
+        ) {
+            return res.status(400).json({
+                message: "Razorpay order has not been paid",
+                verified: false
+            });
+        }
+
+        // =========================================================
+        // 14. CREATE FOODY ORDER
         // =========================================================
 
         const order = new Order({
             user_id: user_id,
             res_id: cart.res_id,
+
             items: orderItems,
 
             order_status: "pending",
@@ -158,78 +267,117 @@ export const verifyOrder = async (req, res) => {
             delivery_fee: delivery_fee,
             total_amount: total,
 
-            delivery_address: address || user.address,
+            delivery_address:
+                address || user.address,
 
-            estimated_delivery_time: new Date(
-                Date.now() + 40 * 60 * 1000
-            )
+            estimated_delivery_time:
+                new Date(
+                    Date.now() +
+                    40 * 60 * 1000
+                )
         });
 
         await order.save();
 
         // =========================================================
-        // CREATE PAYMENT RECORD
+        // 15. CREATE PAYMENT RECORD
         // =========================================================
 
         await Payment.create({
-            payment_order_id: razorpay_order_id,
-            order_id: order._id,
-            payment_method: "online",
-            amount: total,
-            payment_status: "paid",
-            transaction_id: razorpay_payment_id,
-            paid_at: new Date()
+            payment_order_id:
+                razorpay_order_id,
+
+            order_id:
+                order._id,
+
+            payment_method:
+                "online",
+
+            amount:
+                total,
+
+            payment_status:
+                "paid",
+
+            transaction_id:
+                razorpay_payment_id,
+
+            paid_at:
+                new Date()
         });
 
         // =========================================================
-        // ADD ORDER TO USER
+        // 16. ADD ORDER TO USER
         // =========================================================
 
         user.orders.push(order._id);
+
         await user.save();
 
         // =========================================================
-        // ADD ORDER TO RESTAURANT
+        // 17. ADD ORDER TO RESTAURANT
         // =========================================================
 
         restaurant.orders.push(order._id);
+
         await restaurant.save();
 
         // =========================================================
-        // NOTIFY RESTAURANT
+        // 18. NOTIFY RESTAURANT
         // =========================================================
 
-        await notifyOwner(
-            order._id,
-            user.name,
-            restaurant.r_name,
-            phone,
-            address,
-            order
-        );
+        try {
+            await notifyOwner(
+                order._id,
+                user.name,
+                restaurant.r_name,
+                phone,
+                address,
+                order
+            );
+        } catch (notificationError) {
+            // IMPORTANT:
+            // Notification failure should NOT make
+            // an already-created order look like
+            // a failed payment.
+
+            console.error(
+                "Order created but owner notification failed:",
+                notificationError
+            );
+        }
 
         // =========================================================
-        // SUCCESS
+        // 19. SUCCESS
         // =========================================================
 
         return res.status(200).json({
-            message: "Payment verified and order created successfully",
+            message:
+                "Payment verified and order created successfully",
+
             verified: true,
+
             orderId: order._id
         });
 
     } catch (error) {
-
         console.error(
             "Error verifying order:",
             error
         );
 
         return res.status(500).json({
-            message: "Internal server error"
+            message:
+                error instanceof Error
+                    ? error.message
+                    : "Internal server error",
+
+            verified: false
         });
     }
 };
+
+
 
 export const orderWebhook = async (req, res) => {
     try{
