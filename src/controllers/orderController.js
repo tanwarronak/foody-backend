@@ -14,9 +14,7 @@ export const createOrder = async (req, res) => {
             cartId,
             payment_method,
             address,
-            phone,
-            razorpay_order_id,
-            razorpay_payment_id
+            phone
         } = req.body;
 
         // =========================================================
@@ -147,103 +145,31 @@ export const createOrder = async (req, res) => {
 
         if (payment_method === "online") {
 
-            // Razorpay details are required
-            if (
-                !razorpay_order_id ||
-                !razorpay_payment_id
-            ) {
-                return res.status(400).json({
-                    message:
-                        "Razorpay payment details are required"
-                });
-            }
-
             // -----------------------------------------------------
-            // CHECK IF THIS PAYMENT WAS ALREADY USED
+            // CREATE RAZORPAY ORDER
             // -----------------------------------------------------
 
-            const existingPayment =
-                await Payment.findOne({
-                    transaction_id:
-                        razorpay_payment_id
-                });
+            const razorpayOptions = {
+                amount: Math.round(total * 100),
+                currency: "INR",
+                receipt: `receipt_${Date.now()}`
+            };
 
-            if (existingPayment) {
-                return res.status(200).json({
-                    message:
-                        "Payment already processed",
-                    orderId:
-                        existingPayment.order_id
-                });
-            }
-
-            // -----------------------------------------------------
-            // FETCH RAZORPAY PAYMENT
-            // -----------------------------------------------------
-
-            const razorpayPayment =
-                await razorpayInstance.payments.fetch(
-                    razorpay_payment_id
+            const razorpayOrder =
+                await razorpayInstance.orders.create(
+                    razorpayOptions
                 );
-
-            if (!razorpayPayment) {
-                return res.status(404).json({
-                    message:
-                        "Razorpay payment not found"
-                });
-            }
-
-            // -----------------------------------------------------
-            // VERIFY PAYMENT BELONGS TO THIS RAZORPAY ORDER
-            // -----------------------------------------------------
-
-            if (
-                razorpayPayment.order_id !==
-                razorpay_order_id
-            ) {
-                return res.status(400).json({
-                    message:
-                        "Payment does not belong to this Razorpay order"
-                });
-            }
-
-            // -----------------------------------------------------
-            // VERIFY PAYMENT IS CAPTURED
-            // -----------------------------------------------------
-
-            if (
-                razorpayPayment.status !==
-                "captured"
-            ) {
-                return res.status(400).json({
-                    message:
-                        `Payment is not captured. Current status: ${razorpayPayment.status}`
-                });
-            }
-
-            // -----------------------------------------------------
-            // VERIFY PAYMENT AMOUNT
-            // -----------------------------------------------------
-
-            const expectedAmount =
-                Math.round(total * 100);
-
-            if (
-                Number(razorpayPayment.amount) !==
-                expectedAmount
-            ) {
-                return res.status(400).json({
-                    message:
-                        "Payment amount does not match order amount"
-                });
-            }
 
             // -----------------------------------------------------
             // CREATE FOODY ORDER
+            //
+            // Payment is initially pending because Razorpay
+            // payment has not happened yet.
             // -----------------------------------------------------
 
             const order = new Order({
                 user_id: user_id,
+
                 res_id: cart.res_id,
 
                 items: orderItems,
@@ -251,11 +177,15 @@ export const createOrder = async (req, res) => {
                 order_status: "pending",
 
                 payment_method: "online",
-                payment_status: "paid",
+
+                payment_status: "pending",
 
                 subtotal: subtotal,
+
                 platform_fee: platform_fee,
+
                 delivery_fee: delivery_fee,
+
                 total_amount: total,
 
                 delivery_address:
@@ -272,11 +202,14 @@ export const createOrder = async (req, res) => {
 
             // -----------------------------------------------------
             // CREATE PAYMENT RECORD
+            //
+            // Razorpay payment ID does not exist yet.
+            // We store the Razorpay ORDER ID.
             // -----------------------------------------------------
 
             await Payment.create({
                 payment_order_id:
-                    razorpay_order_id,
+                    razorpayOrder.id,
 
                 order_id:
                     order._id,
@@ -288,13 +221,7 @@ export const createOrder = async (req, res) => {
                     total,
 
                 payment_status:
-                    "paid",
-
-                transaction_id:
-                    razorpay_payment_id,
-
-                paid_at:
-                    new Date()
+                    "pending"
             });
 
             // -----------------------------------------------------
@@ -302,6 +229,7 @@ export const createOrder = async (req, res) => {
             // -----------------------------------------------------
 
             user.orders.push(order._id);
+
             await user.save();
 
             // -----------------------------------------------------
@@ -309,6 +237,7 @@ export const createOrder = async (req, res) => {
             // -----------------------------------------------------
 
             restaurant.orders.push(order._id);
+
             await restaurant.save();
 
             // -----------------------------------------------------
@@ -331,12 +260,23 @@ export const createOrder = async (req, res) => {
                 );
             }
 
+            // -----------------------------------------------------
+            // RESPONSE
+            // -----------------------------------------------------
+
             return res.status(201).json({
                 message:
-                    "Online payment verified and order created successfully",
+                    "Razorpay order and Foody order created",
 
                 orderId:
-                    order._id
+                    order._id,
+
+                razorpayOrder: {
+                    id: razorpayOrder.id,
+                    amount: razorpayOrder.amount,
+                    currency: razorpayOrder.currency,
+                    receipt: razorpayOrder.receipt
+                }
             });
         }
 
@@ -346,7 +286,7 @@ export const createOrder = async (req, res) => {
 
         if (payment_method === "cod") {
 
-            const orderOptions = {
+            const order = new Order({
                 user_id: user_id,
 
                 res_id: cart.res_id,
@@ -381,20 +321,15 @@ export const createOrder = async (req, res) => {
                         Date.now() +
                         40 * 60 * 1000
                     )
-            };
-
-            // -----------------------------------------------------
-            // CREATE FOODY ORDER
-            // -----------------------------------------------------
-
-            const order =
-                new Order(orderOptions);
+            });
 
             await order.save();
 
             // -----------------------------------------------------
             // CREATE COD PAYMENT RECORD
             // -----------------------------------------------------
+
+            const codId = `COD_${Date.now()}`;
 
             await Payment.create({
                 order_id:
@@ -407,10 +342,10 @@ export const createOrder = async (req, res) => {
                     total,
 
                 payment_order_id:
-                    `COD_${Date.now()}`,
+                    codId,
 
                 transaction_id:
-                    `COD_${Date.now()}`,
+                    codId,
 
                 payment_status:
                     "pending"
@@ -421,6 +356,7 @@ export const createOrder = async (req, res) => {
             // -----------------------------------------------------
 
             user.orders.push(order._id);
+
             await user.save();
 
             // -----------------------------------------------------
@@ -428,6 +364,7 @@ export const createOrder = async (req, res) => {
             // -----------------------------------------------------
 
             restaurant.orders.push(order._id);
+
             await restaurant.save();
 
             // -----------------------------------------------------
@@ -449,6 +386,10 @@ export const createOrder = async (req, res) => {
                     notificationError
                 );
             }
+
+            // -----------------------------------------------------
+            // RESPONSE
+            // -----------------------------------------------------
 
             return res.status(201).json({
                 message:
