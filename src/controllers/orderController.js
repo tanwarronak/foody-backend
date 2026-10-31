@@ -11,7 +11,7 @@ import mongoose from "mongoose";
 export const createOrder = async (req, res) => {
     try {
         const user_id = req.user._id;
-        const { cartId, payment_method,address } = req.body;
+        const { cartId, payment_method,address,phone } = req.body;
     
         // fetch cart details
         const cart = await Cart_items.findById(cartId).populate('menu.menu_item_id');
@@ -22,6 +22,7 @@ export const createOrder = async (req, res) => {
         // create order
         const orderItems = cart.menu.map(item => ({
             menu_item_id: item.menu_item_id._id,
+            name: item.menu_item_id.name,
             quantity: item.quantity,
             price: item.menu_item_id.price
         }));
@@ -34,10 +35,6 @@ export const createOrder = async (req, res) => {
 
         // check if order is already placed for the same cart
         const user = await User.findById(user_id);
-        const existingOrder = await Order.find({ user_id: user_id, res_id: cart.res_id, items: { $elemMatch: { menu_item_id: { $in: orderItems.map(item => item.menu_item_id) } } }, order_status: { $in: ["pending", "accepted", "preparing", "ready for pickup", "out for delivery"] } });
-        if (existingOrder?.length > 0) {
-            return res.status(400).json({ message: "Order for this cart already exists" });
-        }
 
         let orderOptions ={
             user_id: user_id,
@@ -71,7 +68,7 @@ export const createOrder = async (req, res) => {
         const restaurant = await Restaurant.findById(cart.res_id);
         restaurant.orders.push(order._id);
         await restaurant.save();
-        await notifyOwner(orderId,order);
+        await notifyOwner(order._id,order);
         const razorpayOrder = await razorpayInstance.orders.create(options);
         res.status(201).json({ razorpayOrder, orderId:order._id });
         }
@@ -96,7 +93,7 @@ export const createOrder = async (req, res) => {
         const restaurant = await Restaurant.findById(cart.res_id);
         restaurant.orders.push(order._id);
         await restaurant.save();
-        await notifyOwner(orderId,order);
+        await notifyOwner(order._id,order);
         res.status(200).json({ message: "Order placed successfully"});
         }
         
@@ -532,57 +529,6 @@ export const updateOrderStatus = async (req, res) => {
                 return res.status(400).json({message:`Invalid order status transition from ${order.order_status} to ${newStatus}`});
             }
             order.order_status = newStatus;
-            const orderData = await Order.aggregate([
-                {$match:{_id: new mongoose.Types.ObjectId(orderId)}},
-                {$lookup:{
-                    from:"restaurants",
-                    localField:"res_id",
-                    foreignField:"_id",
-                    as:"restaurant"
-                }},
-                {$lookup:{
-                    from:"users",
-                    localField:"user_id",
-                    foreignField:"_id",
-                    as:"user"
-                }},
-                {
-                    $addFields:{
-                        restaurant_name:{
-                            $first:"$restaurant.r_name"
-                        },
-                        restaurant_address:{
-                            $first:"$restaurant.address"
-                        },
-                        restaurant_contact:{
-                            $first:"$restaurant.phone"
-                        },
-                        customer_name:{
-                            $first:"$user.name"
-                        },
-                        customer_contact:{
-                            $first:"$user.phone"
-                        },
-                        customer_address:{
-                            $first:"$user.address"
-                        }
-                    }
-                },
-                {
-                    $project:{
-                        order_id:1,
-                        total_amount:1,
-                        payment_method:1,
-                        order_status:1,
-                        restaurant_name:1,
-                        restaurant_address:1,
-                        restaurant_contact:1,
-                        customer_name:1,
-                        customer_contact:1,
-                        customer_address:1
-                    }
-                }
-            ]);
             await order.save();
             res.status(200).json({message:"Order status updated successfully"});
     }

@@ -5,21 +5,23 @@ import AzureStorageService from "../services/azureStorageService.js";
 export const createMenuItem = async (req,res)=>{
     try {
         const { name, description, price, category} = req.body;
-        const image = req.file; // Assuming the image is sent as a file in the request
-        if(!name || !description || !price || !category)  return res.status(400).json({message:'all fields are required'})
+        const image = req.file;
+        if(!name || !description || price === undefined || !category) {
+            return res.status(400).json({message:'all fields are required'});
+        }
+        if (!image) {
+            return res.status(400).json({message:'image is required'});
+        }
         
         const restaurant_id = req.params.restaurant_id;
 
         const restaurant = await Restaurant.findById(restaurant_id);
 
-        // need to put a check to see if menu item with same name already exists for that restaurant
         if(!restaurant) return res.status(404).json({message:'restaurant not found'});
 
-        const blobName = await AzureStorageService.upload(image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
-        const imageUrl = AzureStorageService.generateReadUrl(blobName, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
-        
-
-       const newMenuItem =  await new Menu_item({
+        const containerName = process.env.AZURE_STORAGE_MENU_CONTAINER_NAME;
+        const blobName = await AzureStorageService.upload(image, containerName);
+        const newMenuItem = new Menu_item({
             res_id : restaurant_id,
             name,
             description,
@@ -28,7 +30,8 @@ export const createMenuItem = async (req,res)=>{
             image: blobName
         });
         await newMenuItem.save();
-        res.status(200).json({message:'item added successfully',menuItem: newMenuItem, imageUrl});
+        const imageUrl = AzureStorageService.generateReadUrl(blobName, containerName);
+        res.status(201).json({message:'item added successfully',menuItem: newMenuItem, imageUrl});
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
@@ -38,19 +41,33 @@ export const createMenuItem = async (req,res)=>{
 export const updateMenuItem = async (req,res)=>{
     try {
         const {name, description, price, category} = req.body;
-        const image = req.file; 
-       const updatedMenuItem =  await Menu_item.findByIdAndUpdate(req.params.id,
-            {name, description, price, category},{returnDocument:'after'});
-            if(!updatedMenuItem) res.status(404).json({message:'item not found'});
-            updatedMenuItem.image = AzureStorageService.replace(
-                updatedMenuItem.image,
-                image,
-                process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
-                await updatedMenuItem.save();
-            res.status(200).json({
-                message:'menu item updated successfully',
-                updatedMenuItem
-            });
+        const menuItem = await Menu_item.findById(req.params.id);
+        if(!menuItem) {
+            return res.status(404).json({message:'item not found'});
+        }
+
+        const oldBlobName = menuItem.image;
+        const containerName = process.env.AZURE_STORAGE_MENU_CONTAINER_NAME;
+        if (req.file) {
+            menuItem.image = await AzureStorageService.upload(req.file, containerName);
+        }
+        if (name !== undefined) menuItem.name = name;
+        if (description !== undefined) menuItem.description = description;
+        if (price !== undefined) menuItem.price = price;
+        if (category !== undefined) menuItem.category = category;
+        await menuItem.save();
+
+        if (req.file && oldBlobName) {
+            await AzureStorageService.delete(oldBlobName, containerName);
+        }
+        const imageUrl = menuItem.image
+            ? AzureStorageService.generateReadUrl(menuItem.image, containerName)
+            : null;
+        res.status(200).json({
+            message:'menu item updated successfully',
+            updatedMenuItem: menuItem,
+            imageUrl
+        });
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
@@ -59,13 +76,20 @@ export const updateMenuItem = async (req,res)=>{
 
 export const deleteMenuItem = async (req,res)=>{
     try {
-        const deletedMenuItem = await Menu_item.findByIdAndDelete(req.params.id);
-        if(!deletedMenuItem) res.status(404).json({
+        const menuItem = await Menu_item.findById(req.params.id);
+        if(!menuItem) return res.status(404).json({
             message:'item not found'
         });
-         await AzureStorageService.delete(deletedMenuItem.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME);
-        res.status(200).json({message:'menu item removed successfully',
-        deletedMenuItem
+        if (menuItem.image) {
+            await AzureStorageService.delete(
+                menuItem.image,
+                process.env.AZURE_STORAGE_MENU_CONTAINER_NAME
+            );
+        }
+        const deletedMenuItem = await Menu_item.findByIdAndDelete(req.params.id);
+        res.status(200).json({
+            message:'menu item removed successfully',
+            deletedMenuItem
         });
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
@@ -76,13 +100,16 @@ export const deleteMenuItem = async (req,res)=>{
 export const getAllMenuItems = async (req,res)=>{
     try {
         const menuList = await Menu_item.find();
-       if(!menuList) res.status(404).json({
-            message:'item list not found'
-        });
         const response = menuList.map(item => {
+            const menuItem = item.toObject();
             return {
-                ...item.toObject(),
-                image: AzureStorageService.generateReadUrl(item.image, process.env.AZURE_STORAGE_MENU_CONTAINER_NAME)
+                ...menuItem,
+                image: menuItem.image
+                    ? AzureStorageService.generateReadUrl(
+                        menuItem.image,
+                        process.env.AZURE_STORAGE_MENU_CONTAINER_NAME
+                    )
+                    : null
             };
         });
         res.status(200).json({menuList: response})
@@ -99,10 +126,20 @@ export const getMenuItemById = async (req,res)=>{
         if(!menuItems || menuItems.length === 0) {
             return res.status(404).json({message: 'Menu Item not found'});
         }
-        res.status(200).json({menuItems});
+        const response = menuItems.map(item => {
+            const menuItem = item.toObject();
+            return {
+                ...menuItem,
+                image: menuItem.image
+                    ? AzureStorageService.generateReadUrl(
+                        menuItem.image,
+                        process.env.AZURE_STORAGE_MENU_CONTAINER_NAME
+                    )
+                    : null
+            };
+        });
+        res.status(200).json({menuItems: response});
     } catch (error) {
         res.status(500).json({message: 'Server error', error: error.message})
     }
 };
-
-

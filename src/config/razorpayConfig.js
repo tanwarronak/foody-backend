@@ -1,6 +1,11 @@
 import Razorpay from "razorpay";
 
+const { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } = process.env;
+if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+    throw new Error('RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be configured');
+}
+
 export const razorpayInstance = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_T7200VpjRKi6AF",
-    key_secret: process.env.RAZORPAY_KEY_SECRET || "o9Ld3JPvuSpz01djlJ24CSD5"
+    key_id: RAZORPAY_KEY_ID,
+    key_secret: RAZORPAY_KEY_SECRET
 });

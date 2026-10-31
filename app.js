@@ -1,13 +1,10 @@
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
-import {connectDB} from './src/config/databaseConfig.js';
 import cors from 'cors';
 import passport from 'passport';
 import session from 'express-session';
 import setupGoogleAuth from './src/utils/googleAuth.js';
 import rateLimit from 'express-rate-limit';
-
-const config = dotenv.config();
 
 const app = express();
 
@@ -32,10 +29,6 @@ app.use(session({
 }));
 app.use(passport.initialize());
 app.use(passport.session());
-
-
-// connect to db
-connectDB();
 
 
 // import routes

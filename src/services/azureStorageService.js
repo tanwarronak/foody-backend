@@ -3,9 +3,6 @@ import {
     generateBlobSASQueryParameters,
     StorageSharedKeyCredential
 } from "@azure/storage-blob";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 import { blobServiceClient } from "../config/azureStorageConfig.js";
 

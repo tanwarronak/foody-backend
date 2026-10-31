@@ -117,6 +117,11 @@ How to represent it in the frontend:
 - Use `is_open` to show open/closed status.
 - Use `opening_time` and `closing_time` for operating hours.
 
+#### Important note for restaurant updates
+
+- `POST /api/restaurants/register` uploads the image and returns a public `imageUrl`.
+- `PUT /api/restaurants/updaterestaurant/:id` accepts multipart form data and an `image` field, but the controller currently ignores the uploaded file and only updates the text fields.
+
 #### GET `/api/restaurants/getrestaurant/:id`
 
 Example response:
@@ -191,7 +196,7 @@ Example response:
 			"name": "Paneer Butter Masala",
 			"description": "Creamy paneer curry",
 			"price": 220,
-			"image": "66cc-image-name-in-azure",
+			"image": "https://.../menu-image.jpg",
 			"category": "Main Course",
 			"is_available": true
 		}
@@ -202,7 +207,11 @@ Example response:
 How to represent it in the frontend:
 
 - Use this for restaurant-specific menu pages.
-- Since this endpoint returns stored image identifiers rather than guaranteed read URLs, the frontend should rely on the image value returned here only if the backend already transformed it in the response. If not, use the list endpoint or a dedicated image URL source.
+- The `image` value is an Azure read URL, consistent with the public menu list endpoint.
+
+#### Important note for menu creation
+
+- Include the restaurant ID in the URL and upload an image using multipart form data.
 
 ### Cart response shapes
 
@@ -237,6 +246,7 @@ How to represent it in the frontend:
 - Each line item should show item image, item name, unit price, quantity selector, and line total.
 - `res_id` can be used to show which restaurant the cart belongs to.
 - The cart footer should calculate subtotal from each line total.
+- `viewCart` populates `menu.menu_item_id`, so the frontend can read item name, price, and image directly from that nested object.
 
 ### Order response shapes
 
@@ -268,6 +278,7 @@ How to represent it in the frontend:
 
 - For online payment, open the Razorpay checkout using `razorpayOrder` and keep `orderId` for payment verification.
 - For COD, show a confirmation screen and redirect the user to the order history or success page.
+- The backend currently creates the order first for online payments, returns the Razorpay order payload, and expects payment verification to happen later through the payment API.
 
 #### GET `/api/orders/myorders`
 
@@ -350,6 +361,37 @@ How to represent it in the frontend:
 - Show the current order status as a status chip.
 - Show the ETA using `estimated_delivery_time`.
 
+#### GET `/api/orders/getassignedorders`
+
+Example response:
+
+```json
+[
+	{
+		"_id": "66ff6666",
+		"user_id": "66ee5555",
+		"res_id": "66aa1111",
+		"d_partner_id": "66dd9999",
+		"items": [],
+		"order_status": "out_for_delivery",
+		"payment_status": "paid",
+		"payment_method": "online",
+		"subtotal": 440,
+		"delivery_fee": 44,
+		"platform_fee": 10,
+		"total_amount": 494,
+		"delivery_address": "MG Road, Bengaluru",
+		"createdAt": "2026-08-05T10:15:00.000Z"
+	}
+]
+```
+
+How to represent it in the frontend:
+
+- Use this list for the delivery partner dashboard.
+- Render the raw order card and show `order_status`, `payment_status`, `payment_method`, `delivery_address`, and `createdAt`.
+- The backend currently returns the orders without any lookup expansion, so the frontend should not expect customer or restaurant names from this endpoint.
+
 #### GET `/api/orders/order/:id`
 
 Customer example response:
@@ -405,6 +447,7 @@ How to represent it in the frontend:
 - Use the customer version for the customer order detail page.
 - Use the admin version for the restaurant owner order detail panel.
 - Render `menu_items` as an item list with name, description, price, and category.
+- The customer handler returns an array from aggregation, while the admin handler returns a single object.
 
 ### Payment response shapes
 
@@ -434,6 +477,7 @@ How to represent it in the frontend:
 - `payment_status` should drive the payment badge.
 - `amount` should be displayed as the paid amount.
 - `transaction_id` can be shown in a receipt or support section.
+- `paid_at` is written when an online payment is verified and the payment record is created.
 
 ### Frontend UI mapping summary
 
@@ -485,8 +529,8 @@ How to represent it in the frontend:
 
 | Method | Endpoint | Access | Payload / Params | What the frontend should send | Response data |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/api/menuitems/additem/` | Authenticated admin | Multipart body: `{ name, description, price, category, image }` | Send menu item details and image in form data | `{ message, menuItem, imageUrl }` |
-| PUT | `/api/menuitems/updateitem/:id` | Authenticated admin | Multipart body: `{ name, description, price, category, image? }` | Use menu item ID in the URL and include the updated fields | `{ message, updatedMenuItem }` |
+| POST | `/api/menuitems/additem/:restaurant_id` | Authenticated admin | Multipart body: `{ name, description, price, category, image }`; URL param: `restaurant_id` | Send menu item details and image in form data; put the restaurant ID in the URL | `{ message, menuItem, imageUrl }` |
+| PUT | `/api/menuitems/updateitem/:id` | Authenticated admin | Multipart body: `{ name, description, price, category, image? }` | Use menu item ID in the URL and include the updated fields | `{ message, updatedMenuItem, imageUrl }` |
 | DELETE | `/api/menuitems/removeitem/:id` | Authenticated admin | URL param: `id` | Put menu item ID in the URL | `{ message, deletedMenuItem }` |
 | GET | `/api/menuitems/getmenuitems` | Public | None | No auth required | `{ menuList: [...] }` |
 | GET | `/api/menuitems/getmenuitem/:restaurant_id` | Authenticated user | URL param: `restaurant_id` | Put restaurant ID in the URL | `{ menuItems }` |
@@ -562,10 +606,11 @@ How to represent it in the frontend:
 
 ## Important implementation notes
 
-- `menuitems/additem/` currently reads `restaurant_id` in the controller, but the route itself does not define a `:restaurant_id` parameter. If the frontend calls this endpoint as-is, the restaurant id is not available from the URL.
-- `orders/updateorderstatus/:id` appears twice in the router: one protected by admin-only access for restaurant order status updates and one intended for delivery updates. The delivery handler is empty, so only the admin flow is fully implemented right now.
+- `restaurants/updaterestaurant/:id` accepts an uploaded `image` file in middleware, but the controller currently ignores `req.file` and updates only the text fields.
+- `orders/updateorderstatus/:id` appears twice in the router: one protected by admin-only access for restaurant order updates and one intended for delivery updates. The delivery handler is empty, so only the admin flow is implemented.
 - The order status enum in the model uses `ready_for_pickup`, while the controller transition map uses `ready for pickup` in one place. The frontend should follow the backend behavior carefully until that mismatch is resolved.
-- `getUserProfile`, `getAdminProfile`, `getAllOrders`, `getOrderById`, and the cart APIs all depend on a valid session cookie. If the frontend omits credentials, these routes will fail with unauthorized responses.
+- `getUserProfile`, `getAdminProfile`, `getAllOrders`, `getOrderById`, `getAssignedOrders`, and the cart APIs all depend on a valid session cookie. If the frontend omits credentials, these routes will fail with unauthorized responses.
+- `POST /api/payments/verifyorder/webhook` is stubbed and does not yet process webhook payloads.
 
 ## Frontend integration checklist
 
@@ -575,3 +620,8 @@ How to represent it in the frontend:
 4. For order placement, send the cart id and payment method from the checkout screen.
 5. For online payments, store the returned Razorpay order id and verify it after payment success.
 6. Use the returned response shapes directly for profile, cart, restaurant, menu, order, and payment screens.
+7. Treat the delivery partner update endpoint and payment webhook endpoint as non-functional until the backend implements them.
+
+
+
+blockDuringTime("23:00", "10:30")

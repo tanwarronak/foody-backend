@@ -5,7 +5,7 @@ export const notifyOwner = async (orderId,orderData) => {
         const notificationMessage =  `
             ✨ *📥 New Order Received!* ✨
             \-----------------------------
-            🆔 *Order ID:* \`${orderId}\`
+            🆔 *Order items:* \`${orderData.orderItems}\`
             📌 *Status:* ${orderData.order_status}
             💳 *Payment Method:* ${orderData.payment_method}
             💰 *Total Amount:* \$${orderData.total_amount}
