@@ -2,24 +2,69 @@ import {Cart_items} from '../models/cartModel.js';
 
 export const addToCart = async (req, res) => {
     try{
-        const userId = req.user._id;
-        const { itemId,restaurantId, quantity } = req.body;
-        if (!itemId || !quantity) {
-            return res.status(400).json({ message: "Missing required fields" });
-        }
-        let cart = await Cart_items.findOne({ user_id: userId });
-        if (!cart) {
-            cart = new Cart_items({ user_id: userId,res_id: restaurantId, menu: [] });
-        }
-        const existingItemIndex = cart.menu.findIndex(item => item.menu_item_id.toString() === itemId);
-        if (existingItemIndex >= 0) {
-            cart.menu[existingItemIndex].quantity += quantity;
-        } else {
-            cart.menu.push({ menu_item_id: itemId, quantity });
-        }
-        await cart.save();
-        res.status(200).json({ message: "Item added to cart successfully", cart });
-       }
+const userId = req.user._id;
+const { itemId, restaurantId, quantity } = req.body;
+
+if (!itemId || !restaurantId || !quantity) {
+    return res.status(400).json({
+        message: "Missing required fields"
+    });
+}
+
+let cart = await Cart_items.findOne({ user_id: userId });
+
+if (!cart) {
+    // No cart exists → create one with the item
+    cart = new Cart_items({
+        user_id: userId,
+        res_id: restaurantId,
+        menu: [
+            {
+                menu_item_id: itemId,
+                quantity: quantity
+            }
+        ]
+    });
+} else {
+    // Cart exists but has no items
+    if (cart.menu.length === 0) {
+        cart.res_id = restaurantId;
+    }
+
+    // Cart has items from another restaurant
+    else if (cart.res_id.toString() !== restaurantId.toString()) {
+        return res.status(409).json({
+            message: "Your cart contains items from another restaurant.",
+            code: "DIFFERENT_RESTAURANT",
+            currentRestaurantId: cart.res_id,
+            requestedRestaurantId: restaurantId
+        });
+    }
+
+    // Check if item already exists
+    const existingItem = cart.menu.find(
+        item => item.menu_item_id.toString() === itemId.toString()
+    );
+
+    if (existingItem) {
+        // Increase quantity
+        existingItem.quantity += quantity;
+    } else {
+        // Add new item
+        cart.menu.push({
+            menu_item_id: itemId,
+            quantity: quantity
+        });
+    }
+}
+
+await cart.save();
+
+return res.status(200).json({
+    message: "Item added to cart successfully",
+    cart
+});
+}
     catch(error){
         res.status(500).json({ message: "Internal server error" });
     }
@@ -98,6 +143,3 @@ export const clearCart = async (req, res) => {
         res.status(500).json({ message: "Internal server error" });
     }
 };
-
-
-

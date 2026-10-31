@@ -3,10 +3,12 @@ import {Order} from '../models/ordersModel.js';
 import setupGoogleAuth from '../utils/googleAuth.js';
 
 
- export const getUserProfile = async (req, res) => {
+
+export const getUserProfile = async (req, res) => {
     try {
         const userId = req.user.id;
         const user = await User.findById(userId);
+
         res.status(200).json({
             name: user.name,
             email: user.email,
@@ -14,9 +16,11 @@ import setupGoogleAuth from '../utils/googleAuth.js';
             phone: user.phone
         });
     } catch (error) {
-        res.status(500).json({ message: 'please login again' });
+        res.status(500).json({
+            message: 'please login again'
+        });
     }
- };
+};
 
  export const updateUserProfile = async (req, res) => {
     try {

@@ -9,7 +9,20 @@ const router = express.Router();
 
 router.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-router.get('/auth/google/callback', passport.authenticate('google', { successRedirect: '/api/users/profile', failureRedirect: '/login' }));
+router.get(
+  "/auth/google/callback",
+  passport.authenticate("google", {
+    failureRedirect: "/login",
+    session: true,
+  }),
+  (req, res) => {
+    if (req.user.role === "admin") {
+      return res.redirect("http://10.60.31.231:3000");
+    }
+
+    return res.redirect("https://foody.monster/?auth=success");
+  }
+);
 
 // customer routes
 router.get('/profile',isAuthenticated, getUserProfile);

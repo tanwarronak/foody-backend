@@ -567,7 +567,7 @@ How to represent it in the frontend:
 | GET | `/api/orders/getorder/:id` | Authenticated admin | URL param: `id` | Put order ID in the URL | Aggregated order object for admin |
 | PUT | `/api/orders/updateorderstatus/:id` | Authenticated admin | Body: `{ order_status }` | Put order ID in the URL and send the next allowed status | `{ message }` |
 | GET | `/api/orders/getassignedorders` | Authenticated delivery partner | None | Session cookie only | Array of assigned orders |
-| PUT | `/api/orders/updateorderstatus/:id` | Authenticated user | Body expected by delivery flow, but handler is currently empty | This route exists for delivery status updates but the controller has no implementation yet | No implemented response payload |
+| PUT | `/api/orders/updatedeliverystatus/:id` | Authenticated assigned delivery partner | URL param: `id`; no body required | Put the assigned order ID in the URL; this marks an `out_for_delivery` order as delivered | `{ message }` |
 
 ### Order placement payload details
 
@@ -588,7 +588,7 @@ How to represent it in the frontend:
 
 - Admin order updates only allow valid status transitions.
 - Delivery partner assignment fetching only works if the user role is `deliveryPerson`.
-- The delivery status update controller is currently empty, so the frontend should not rely on that route yet.
+- Delivery partners can mark only their own assigned `out_for_delivery` orders as delivered.
 
 ## Payments APIs
 
@@ -607,8 +607,8 @@ How to represent it in the frontend:
 ## Important implementation notes
 
 - `restaurants/updaterestaurant/:id` accepts an uploaded `image` file in middleware, but the controller currently ignores `req.file` and updates only the text fields.
-- `orders/updateorderstatus/:id` appears twice in the router: one protected by admin-only access for restaurant order updates and one intended for delivery updates. The delivery handler is empty, so only the admin flow is implemented.
-- The order status enum in the model uses `ready_for_pickup`, while the controller transition map uses `ready for pickup` in one place. The frontend should follow the backend behavior carefully until that mismatch is resolved.
+- `orders/updateorderstatus/:id` is reserved for restaurant admins; delivery partners use `orders/updatedeliverystatus/:id`.
+- Order status transitions use the model enum values, including `ready_for_pickup` and `out_for_delivery`.
 - `getUserProfile`, `getAdminProfile`, `getAllOrders`, `getOrderById`, `getAssignedOrders`, and the cart APIs all depend on a valid session cookie. If the frontend omits credentials, these routes will fail with unauthorized responses.
 - `POST /api/payments/verifyorder/webhook` is stubbed and does not yet process webhook payloads.
 
@@ -620,7 +620,7 @@ How to represent it in the frontend:
 4. For order placement, send the cart id and payment method from the checkout screen.
 5. For online payments, store the returned Razorpay order id and verify it after payment success.
 6. Use the returned response shapes directly for profile, cart, restaurant, menu, order, and payment screens.
-7. Treat the delivery partner update endpoint and payment webhook endpoint as non-functional until the backend implements them.
+7. Treat the payment webhook endpoint as non-functional until the backend implements it.
 
 
 

@@ -18,7 +18,6 @@ export const createMenuItem = async (req,res)=>{
         const restaurant = await Restaurant.findById(restaurant_id);
 
         if(!restaurant) return res.status(404).json({message:'restaurant not found'});
-
         const containerName = process.env.AZURE_STORAGE_MENU_CONTAINER_NAME;
         const blobName = await AzureStorageService.upload(image, containerName);
         const newMenuItem = new Menu_item({

@@ -1,8 +1,7 @@
-import {Order} from "../models/ordersModel.js";
-import {Menu_item} from "../models/menuModel.js";
-import {User} from "../models/userModel.js";
-import {Restaurant} from "../models/restaurantModel.js";
-import {Cart_items} from "../models/cartModel.js";
+import { Order } from "../models/ordersModel.js";
+import { User } from "../models/userModel.js";
+import { Restaurant } from "../models/restaurantModel.js";
+import { Cart_items } from "../models/cartModel.js";
 import { razorpayInstance } from "../config/razorpayConfig.js";
 import { Payment } from "../models/paymentModel.js";
 import { notifyOwner } from "../services/ownerNotificationService.js";
@@ -11,15 +10,109 @@ import mongoose from "mongoose";
 export const createOrder = async (req, res) => {
     try {
         const user_id = req.user._id;
-        const { cartId, payment_method,address,phone } = req.body;
-    
-        // fetch cart details
-        const cart = await Cart_items.findById(cartId).populate('menu.menu_item_id');
-        if(!cart || cart.user_id.toString() !== user_id.toString()){
-            return res.status(404).json({ message: "Cart not found" });
-        }; // this portion is giving errors frequently, need to check it once again
+        const {
+            cartId,
+            payment_method,
+            address,
+            phone
+        } = req.body;
 
-        // create order
+        // =========================================================
+        // 1. VALIDATE PAYMENT METHOD
+        // =========================================================
+
+        if (!["online", "cod"].includes(payment_method)) {
+            return res.status(400).json({
+                message: "Invalid payment method"
+            });
+        }
+
+        // =========================================================
+        // 2. FETCH CART
+        // =========================================================
+
+        const cart = await Cart_items
+            .findById(cartId)
+            .populate("menu.menu_item_id");
+
+        if (!cart) {
+            return res.status(404).json({
+                message: "Cart not found"
+            });
+        }
+
+        // =========================================================
+        // 3. CHECK CART OWNERSHIP
+        // =========================================================
+
+        if (
+            cart.user_id.toString() !==
+            user_id.toString()
+        ) {
+            return res.status(403).json({
+                message:
+                    "You are not authorized to use this cart"
+            });
+        }
+
+        // =========================================================
+        // 4. CHECK CART
+        // =========================================================
+
+        if (
+            !cart.menu ||
+            cart.menu.length === 0
+        ) {
+            return res.status(400).json({
+                message: "Cart is empty"
+            });
+        }
+
+        // =========================================================
+        // 5. CHECK MENU ITEMS
+        // =========================================================
+
+        const invalidItem = cart.menu.find(
+            item => !item.menu_item_id
+        );
+
+        if (invalidItem) {
+            return res.status(400).json({
+                message:
+                    "One or more menu items are no longer available"
+            });
+        }
+
+        // =========================================================
+        // 6. GET USER
+        // =========================================================
+
+        const user = await User.findById(user_id);
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        // =========================================================
+        // 7. GET RESTAURANT
+        // =========================================================
+
+        const restaurant = await Restaurant.findById(
+            cart.res_id
+        );
+
+        if (!restaurant) {
+            return res.status(404).json({
+                message: "Restaurant not found"
+            });
+        }
+
+        // =========================================================
+        // 8. CREATE ORDER ITEMS
+        // =========================================================
+
         const orderItems = cart.menu.map(item => ({
             menu_item_id: item.menu_item_id._id,
             name: item.menu_item_id.name,
@@ -27,79 +120,297 @@ export const createOrder = async (req, res) => {
             price: item.menu_item_id.price
         }));
 
-        // calculate subtotal, platform_fee, delivery_fee and total
-        let subtotal = orderItems.reduce((total, item)=> total + (item.quantity * item.price), 0);
-        let platform_fee = 10;
-        let delivery_fee = subtotal*0.1;
-        let total = subtotal + platform_fee + delivery_fee;
+        // =========================================================
+        // 9. CALCULATE TOTAL
+        // =========================================================
 
-        // check if order is already placed for the same cart
-        const user = await User.findById(user_id);
+        const subtotal = orderItems.reduce(
+            (total, item) =>
+                total +
+                item.quantity * item.price,
+            0
+        );
 
-        let orderOptions ={
-            user_id: user_id,
-            res_id:cart.res_id,
-            items: orderItems,
-            subtotal: subtotal,
-            platform_fee: platform_fee,
-            delivery_fee: delivery_fee,
-            total_amount: total,
-            order_status: "pending",
-            delivery_address: address || user.address, // may need to change it
-            estimated_delivery_time: new Date(Date.now() + 40*60*1000) // 30 mins from now
-        }
+        const platform_fee = 11;
+        const delivery_fee = 21;
 
-        if(payment_method === "online"){
-            let options = {
-            amount: total * 100, // 1 INR = 100 paise
-            currency: "INR",
-            receipt: `receipt_${Date.now()}`,
-        };
-        const order = new Order({
-           ...orderOptions,
-           payment_method: "online",
-           payment_status: "pending"
-        });
-        await order.save();
-        // Add order to user's orders list
-        user.orders.push(order._id);
-        await user.save();
-        // Add order to restaurant's orders list
-        const restaurant = await Restaurant.findById(cart.res_id);
-        restaurant.orders.push(order._id);
-        await restaurant.save();
-        await notifyOwner(order._id,order);
-        const razorpayOrder = await razorpayInstance.orders.create(options);
-        res.status(201).json({ razorpayOrder, orderId:order._id });
-        }
+        const total =
+            subtotal +
+            platform_fee +
+            delivery_fee;
 
-        if(payment_method === "cod"){
+        // =========================================================
+        // 10. ONLINE PAYMENT
+        // =========================================================
+
+        if (payment_method === "online") {
+
+            // -----------------------------------------------------
+            // CREATE RAZORPAY ORDER
+            // -----------------------------------------------------
+
+            const razorpayOptions = {
+                amount: Math.round(total * 100),
+                currency: "INR",
+                receipt: `receipt_${Date.now()}`
+            };
+
+            const razorpayOrder =
+                await razorpayInstance.orders.create(
+                    razorpayOptions
+                );
+
+            // -----------------------------------------------------
+            // CREATE FOODY ORDER
+            //
+            // Payment has not happened yet.
+            // -----------------------------------------------------
+
             const order = new Order({
-           ...orderOptions,
-           payment_method: "cod",
-           payment_status: "pending"
-        });
-        await order.save();
-        await Payment.create({
-    order_id: order._id,
-    payment_method: "cod",
-    amount: total,
-    payment_status: "pending"
-});
-        // Add order to user's orders list
-        user.orders.push(order._id);
-        await user.save();
-        // Add order to restaurant's orders list
-        const restaurant = await Restaurant.findById(cart.res_id);
-        restaurant.orders.push(order._id);
-        await restaurant.save();
-        await notifyOwner(order._id,order);
-        res.status(200).json({ message: "Order placed successfully"});
+                user_id,
+
+                res_id: cart.res_id,
+
+                items: orderItems,
+
+                order_status: "pending",
+
+                payment_method: "online",
+
+                payment_status: "pending",
+
+                subtotal,
+
+                platform_fee,
+
+                delivery_fee,
+
+                total_amount: total,
+
+                delivery_address:
+                    address || user.address,
+
+                estimated_delivery_time:
+                    new Date(
+                        Date.now() +
+                        40 * 60 * 1000
+                    )
+            });
+
+            await order.save();
+
+            // -----------------------------------------------------
+            // CREATE PAYMENT RECORD
+            // -----------------------------------------------------
+
+            await Payment.create({
+                payment_order_id:
+                    razorpayOrder.id,
+
+                order_id:
+                    order._id,
+
+                payment_method:
+                    "online",
+
+                amount:
+                    total,
+
+                payment_status:
+                    "pending"
+            });
+
+            // -----------------------------------------------------
+            // ADD ORDER TO USER
+            // -----------------------------------------------------
+
+            user.orders.push(order._id);
+
+            await user.save();
+
+            // -----------------------------------------------------
+            // ADD ORDER TO RESTAURANT
+            // -----------------------------------------------------
+
+            restaurant.orders.push(order._id);
+
+            await restaurant.save();
+
+            // -----------------------------------------------------
+            // NOTIFY RESTAURANT
+            // -----------------------------------------------------
+
+            try {
+                await notifyOwner(
+                    order._id,
+                    user.name,
+                    restaurant.r_name,
+                    phone || user.phone,
+                    address || user.address,
+                    order
+                );
+            } catch (notificationError) {
+                console.error(
+                    "Order created but owner notification failed:",
+                    notificationError
+                );
+            }
+
+            // -----------------------------------------------------
+            // RESPONSE
+            // -----------------------------------------------------
+
+            return res.status(201).json({
+                message:
+                    "Razorpay order and Foody order created",
+
+                orderId:
+                    order._id,
+
+                razorpayOrder: {
+                    id:
+                        razorpayOrder.id,
+
+                    amount:
+                        razorpayOrder.amount,
+
+                    currency:
+                        razorpayOrder.currency,
+
+                    receipt:
+                        razorpayOrder.receipt
+                }
+            });
         }
-        
-    }
-    catch(error){
-        res.status(500).json({ message:error.message });
+
+        // =========================================================
+        // 11. CASH ON DELIVERY
+        // =========================================================
+
+        if (payment_method === "cod") {
+
+            const order = new Order({
+                user_id,
+
+                res_id: cart.res_id,
+
+                items: orderItems,
+
+                subtotal,
+
+                platform_fee,
+
+                delivery_fee,
+
+                total_amount: total,
+
+                order_status: "pending",
+
+                payment_method: "cod",
+
+                payment_status: "pending",
+
+                delivery_address:
+                    address || user.address,
+
+                estimated_delivery_time:
+                    new Date(
+                        Date.now() +
+                        40 * 60 * 1000
+                    )
+            });
+
+            await order.save();
+
+            // -----------------------------------------------------
+            // CREATE COD PAYMENT
+            // -----------------------------------------------------
+
+            const codId =
+                `COD_${Date.now()}`;
+
+            await Payment.create({
+                order_id:
+                    order._id,
+
+                payment_method:
+                    "cod",
+
+                amount:
+                    total,
+
+                payment_order_id:
+                    codId,
+
+                transaction_id:
+                    codId,
+
+                payment_status:
+                    "pending"
+            });
+
+            // -----------------------------------------------------
+            // ADD ORDER TO USER
+            // -----------------------------------------------------
+
+            user.orders.push(order._id);
+
+            await user.save();
+
+            // -----------------------------------------------------
+            // ADD ORDER TO RESTAURANT
+            // -----------------------------------------------------
+
+            restaurant.orders.push(order._id);
+
+            await restaurant.save();
+
+            // -----------------------------------------------------
+            // NOTIFY RESTAURANT
+            // -----------------------------------------------------
+
+            try {
+                await notifyOwner(
+                    order._id,
+                    user.name,
+                    restaurant.r_name,
+                    phone || user.phone,
+                    address || user.address,
+                    order
+                );
+            } catch (notificationError) {
+                console.error(
+                    "Order created but owner notification failed:",
+                    notificationError
+                );
+            }
+
+            // -----------------------------------------------------
+            // RESPONSE
+            // -----------------------------------------------------
+
+            return res.status(201).json({
+                message:
+                    "Order placed successfully",
+
+                orderId:
+                    order._id
+            });
+        }
+
+    } catch (error) {
+
+        console.error(
+            "Create order error:",
+            error
+        );
+
+        return res.status(500).json({
+            message:
+                error instanceof Error
+                    ? error.message
+                    : "Internal server error"
+        });
     }
 };
 
@@ -353,13 +664,19 @@ export const getOrderById = async (req, res) => {
     try {
             const user = req.user;
             const orderId = req.params.id;
-            if(!user){
-                return res.status(404).json({ message: "User not found" });
+            if (!user) {
+                return res.status(401).json({ message: "Unauthorized" });
+            }
+            if (!mongoose.Types.ObjectId.isValid(orderId)) {
+                return res.status(400).json({ message: "Invalid order ID" });
             }
             if(user.role === "customer"){
                 const order = await Order.aggregate([
                     {
-                        $match:{_id: new mongoose.Types.ObjectId(orderId)}
+                        $match:{
+                            _id: new mongoose.Types.ObjectId(orderId),
+                            user_id: user._id
+                        }
                     },
                     {
                         $lookup:{
@@ -419,7 +736,9 @@ export const getOrderById = async (req, res) => {
                         }
                     }
                 ]);
-                if(!order) return res.status(404).json({message:"order not found"})
+                if (!order.length) {
+                    return res.status(404).json({ message: "Order not found" });
+                }
                 return res.status(200).json(order);
                 
             } 
@@ -496,6 +815,7 @@ export const getOrderById = async (req, res) => {
 
 return res.status(200).json(order[0]);
             }
+            return res.status(403).json({ message: "Access denied" });
     }
     catch(error){
         res.status(500).json({ message: "Internal server error" });
@@ -517,16 +837,18 @@ export const updateOrderStatus = async (req, res) => {
                 return res.status(403).json({message:"You are not authorized to update this order"});
             }
             const validTransitions = {
-        pending: ["accepted", "cancelled"],
-        accepted: ["preparing", "cancelled"],
-        preparing: ["ready for pickup"],
-        "ready for pickup": ["out for delivery"],
-        "out for delivery": ["delivered"],
-        delivered: [],
-        cancelled: []
-    };
-            if(!validTransitions[order.order_status].includes(req.body.order_status)){
-                return res.status(400).json({message:`Invalid order status transition from ${order.order_status} to ${newStatus}`});
+                pending: ["accepted", "cancelled"],
+                accepted: ["preparing", "cancelled"],
+                preparing: ["ready_for_pickup"],
+                ready_for_pickup: ["out_for_delivery"],
+                out_for_delivery: ["delivered"],
+                delivered: [],
+                cancelled: []
+            };
+            if (!validTransitions[order.order_status]?.includes(newStatus)) {
+                return res.status(400).json({
+                    message: `Invalid order status transition from ${order.order_status} to ${newStatus}`
+                });
             }
             order.order_status = newStatus;
             await order.save();
@@ -560,14 +882,33 @@ export const getAssignedOrders = async (req, res) => {
 
 export const updateDeliveryStatus = async (req, res) => {
     try {
-        
+        if (req.user?.role !== "deliveryPerson") {
+            return res.status(403).json({ message: "Delivery partner access required" });
+        }
+        const order = await Order.findById(req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
+        }
+        if (
+            !order.d_partner_id ||
+            order.d_partner_id.toString() !== req.user._id.toString()
+        ) {
+            return res.status(403).json({ message: "You are not assigned to this order" });
+        }
+        if (order.order_status !== "out_for_delivery") {
+            return res.status(400).json({
+                message: `Invalid delivery status transition from ${order.order_status} to delivered`
+            });
+        }
+        order.order_status = "delivered";
+        await order.save();
+        return res.status(200).json({
+            message: "Delivery status updated successfully"
+        });
     }
     catch(error){
-        res.status(500).json({ message: "Internal server error" });
+        res.status(500).json({ message: error.message });
     }
 };
-
-
-
 
 

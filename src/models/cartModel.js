@@ -29,9 +29,3 @@ const cartSchema = new mongoose.Schema({
 
 
 export const Cart_items = mongoose.model('Cart_item',cartSchema);
-
-
-// user_id(F),
-//   menu_item_id(F),---> quantity
-
-
