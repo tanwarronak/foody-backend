@@ -120,7 +120,7 @@ How to represent it in the frontend:
 #### Important note for restaurant updates
 
 - `POST /api/restaurants/register` uploads the image and returns a public `imageUrl`.
-- `PUT /api/restaurants/updaterestaurant/:id` accepts multipart form data and an `image` field, but the controller currently ignores the uploaded file and only updates the text fields.
+- `PUT /api/restaurants/updaterestaurant/:id` accepts multipart form data. Send a new `image` field to replace the stored restaurant image; the response includes an `imageUrl` when an image is uploaded.
 
 #### GET `/api/restaurants/getrestaurant/:id`
 
@@ -516,7 +516,7 @@ How to represent it in the frontend:
 | POST | `/api/restaurants/register` | Authenticated admin | Multipart body: `{ name, description, phone, email, address, opening_time, closing_time, image }` | Upload restaurant image in `image` and send the other fields as form data | `{ message, restaurant, imageUrl }` |
 | GET | `/api/restaurants/getrestaurants` | Public | None | No auth required | `{ restaurants: [...] }` |
 | GET | `/api/restaurants/getrestaurant/:id` | Public | URL param: `id` | Put restaurant ID in the URL | `{ restaurant }` |
-| PUT | `/api/restaurants/updaterestaurant/:id` | Authenticated admin | Multipart body: `{ name, description, phone, email, address, opening_time, closing_time, image? }` | Use the restaurant ID in the URL and send updated fields; if the image is changed, send it as `image` | `{ message, restaurant }` |
+| PUT | `/api/restaurants/updaterestaurant/:id` | Authenticated admin | Multipart body: `{ name, description, phone, email, address, opening_time, closing_time, image? }` | Use the restaurant ID in the URL and send updated fields; if the image is changed, send it as `image` | `{ message, restaurant, imageUrl? }` |
 | DELETE | `/api/restaurants/deleterestaurant/:id` | Authenticated admin | URL param: `id` | Put restaurant ID in the URL | `{ message }` |
 
 ### Notes for restaurant flows
@@ -606,7 +606,6 @@ How to represent it in the frontend:
 
 ## Important implementation notes
 
-- `restaurants/updaterestaurant/:id` accepts an uploaded `image` file in middleware, but the controller currently ignores `req.file` and updates only the text fields.
 - `orders/updateorderstatus/:id` is reserved for restaurant admins; delivery partners use `orders/updatedeliverystatus/:id`.
 - Order status transitions use the model enum values, including `ready_for_pickup` and `out_for_delivery`.
 - `getUserProfile`, `getAdminProfile`, `getAllOrders`, `getOrderById`, `getAssignedOrders`, and the cart APIs all depend on a valid session cookie. If the frontend omits credentials, these routes will fail with unauthorized responses.
