@@ -67,6 +67,9 @@ const orderSchema = new mongoose.Schema({
         type:Number,
         default:0
     },
+    service_fee: { type: Number, default: 0 },
+    coupon_code: { type: String, default: null },
+    discount: { type: Number, default: 0 },
     total_amount:{
         type:Number,
         default:0

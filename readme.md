@@ -1,5 +1,14 @@
 # Backend Foody API Documentation
 
+## Administration, charges and coupons
+
+- All authenticated users with the `admin` role manage all restaurants, menu items and orders. Admin order lists are not restricted to a restaurant owner.
+- `PATCH /api/restaurants/:id/status` (admin) accepts JSON `{ "is_open": true }` or `false`. Closed restaurants reject new orders. Opening and closing times are informational; the admin switch controls availability.
+- Orders include the existing ₹21 delivery fee and ₹11 platform fee. An additional order charge is calculated from the pre-discount item subtotal: ₹0 up to ₹150, ₹6 above ₹150, ₹12 above ₹250, and ₹18 above ₹400. Only the highest tier applies.
+- `GET /api/coupons` lists coupons for admins. `POST /api/coupons` creates one from JSON `{ "code", "type": "fixed" | "percent", "value", "expires_at", "usage_limit" }`. `PATCH /api/coupons/:id` updates those fields or `active` (admin only). Codes are case-insensitive, percentage discounts are capped at 100%, and discounts cannot exceed the item subtotal.
+- `POST /api/coupons/quote` accepts `{ "cartId", "code" }` for an authenticated customer and returns server-calculated pricing. Send the optional `coupon_code` and displayed `expected_total` with `POST /api/orders/placeorder`; the server validates the price and reserves one use atomically. Uses count when an order is created, including pending online payments. Expired, inactive, or exhausted coupons cannot be used.
+- Set `ADMIN_APP_URL` and `CUSTOMER_APP_URL` to the frontend origins for CORS and Google OAuth redirects, and use the same `VITE_API_URL` in both frontends.
+
 This backend uses session-based authentication with Passport and cookie sessions. The frontend should send requests with credentials enabled so the session cookie is included on protected routes.
 
 ## Base URLs
@@ -164,7 +173,6 @@ Example response:
 			"name": "Paneer Butter Masala",
 			"description": "Creamy paneer curry",
 			"price": 220,
-			"image": "https://.../menu-image.jpg",
 			"category": "Main Course",
 			"is_available": true,
 			"__v": 0
@@ -176,7 +184,6 @@ Example response:
 How to represent it in the frontend:
 
 - Use each item as a menu card.
-- Show `image` in the thumbnail area.
 - Show `name` as the item title.
 - Show `description` below the title.
 - Show `price` as the price label.
@@ -196,7 +203,6 @@ Example response:
 			"name": "Paneer Butter Masala",
 			"description": "Creamy paneer curry",
 			"price": 220,
-			"image": "https://.../menu-image.jpg",
 			"category": "Main Course",
 			"is_available": true
 		}
@@ -207,11 +213,11 @@ Example response:
 How to represent it in the frontend:
 
 - Use this for restaurant-specific menu pages.
-- The `image` value is an Azure read URL, consistent with the public menu list endpoint.
+- Menu items do not include images.
 
 #### Important note for menu creation
 
-- Include the restaurant ID in the URL and upload an image using multipart form data.
+- Include the restaurant ID in the URL and send the item fields as JSON. No image is required.
 
 ### Cart response shapes
 
@@ -230,8 +236,7 @@ Example response:
 				"menu_item_id": {
 					"_id": "66cc3333",
 					"name": "Paneer Butter Masala",
-					"price": 220,
-					"image": "https://.../menu-image.jpg"
+					"price": 220
 				},
 				"quantity": 2
 			}
@@ -243,10 +248,10 @@ Example response:
 How to represent it in the frontend:
 
 - Render the cart as a list of line items.
-- Each line item should show item image, item name, unit price, quantity selector, and line total.
+- Each line item should show item name, unit price, quantity selector, and line total.
 - `res_id` can be used to show which restaurant the cart belongs to.
 - The cart footer should calculate subtotal from each line total.
-- `viewCart` populates `menu.menu_item_id`, so the frontend can read item name, price, and image directly from that nested object.
+- `viewCart` populates `menu.menu_item_id`, so the frontend can read item name and price directly from that nested object.
 
 ### Order response shapes
 
@@ -507,7 +512,7 @@ How to represent it in the frontend:
 
 - `phone` is validated on the server to be exactly 10 digits.
 - The frontend should keep the session alive by sending credentials on every protected request.
-- `getAdminProfile` also calculates summary stats from the admin-owned restaurant orders.
+- `getAdminProfile` calculates summary stats across all restaurant orders.
 
 ## Restaurants APIs
 
@@ -529,15 +534,15 @@ How to represent it in the frontend:
 
 | Method | Endpoint | Access | Payload / Params | What the frontend should send | Response data |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/api/menuitems/additem/:restaurant_id` | Authenticated admin | Multipart body: `{ name, description, price, category, image }`; URL param: `restaurant_id` | Send menu item details and image in form data; put the restaurant ID in the URL | `{ message, menuItem, imageUrl }` |
-| PUT | `/api/menuitems/updateitem/:id` | Authenticated admin | Multipart body: `{ name, description, price, category, image? }` | Use menu item ID in the URL and include the updated fields | `{ message, updatedMenuItem, imageUrl }` |
+| POST | `/api/menuitems/additem/:restaurant_id` | Authenticated admin | JSON body: `{ name, description, price, category }`; URL param: `restaurant_id` | Send menu item details as JSON; put the restaurant ID in the URL | `{ message, menuItem }` |
+| PUT | `/api/menuitems/updateitem/:id` | Authenticated admin | JSON body: `{ name, description, price, category }` | Use menu item ID in the URL and include the updated fields | `{ message, updatedMenuItem }` |
 | DELETE | `/api/menuitems/removeitem/:id` | Authenticated admin | URL param: `id` | Put menu item ID in the URL | `{ message, deletedMenuItem }` |
 | GET | `/api/menuitems/getmenuitems` | Public | None | No auth required | `{ menuList: [...] }` |
 | GET | `/api/menuitems/getmenuitem/:restaurant_id` | Authenticated user | URL param: `restaurant_id` | Put restaurant ID in the URL | `{ menuItems }` |
 
 ### Notes for menu screens
 
-- Menu item creation and updates use Azure storage for images.
+- Menu item creation and updates use JSON and do not upload images.
 - The public menu list endpoint returns every item across restaurants.
 - The restaurant-specific menu endpoint is protected, so the frontend should send the session cookie.
 
@@ -563,7 +568,7 @@ How to represent it in the frontend:
 | POST | `/api/orders/placeorder` | Authenticated user | Body: `{ cartId, payment_method, address }` | Send the cart ID, selected payment method, and delivery address if different from profile address | Online payment: `{ razorpayOrder, orderId }`; COD: `{ message }` |
 | GET | `/api/orders/myorders` | Authenticated customer | None | Session cookie only | Array of order summaries for the customer |
 | GET | `/api/orders/order/:id` | Authenticated user | URL param: `id` | Put order ID in the URL | Customer gets an array-like aggregated order result; admin gets a single order object |
-| GET | `/api/orders/getorders` | Authenticated admin | None | Session cookie only | Array of order summaries for the restaurant owner |
+| GET | `/api/orders/getorders` | Authenticated admin | None | Session cookie only | Array of order summaries for all restaurants |
 | GET | `/api/orders/getorder/:id` | Authenticated admin | URL param: `id` | Put order ID in the URL | Aggregated order object for admin |
 | PUT | `/api/orders/updateorderstatus/:id` | Authenticated admin | Body: `{ order_status }` | Put order ID in the URL and send the next allowed status | `{ message }` |
 | GET | `/api/orders/getassignedorders` | Authenticated delivery partner | None | Session cookie only | Array of assigned orders |
@@ -606,7 +611,7 @@ How to represent it in the frontend:
 
 ## Important implementation notes
 
-- `orders/updateorderstatus/:id` is reserved for restaurant admins; delivery partners use `orders/updatedeliverystatus/:id`.
+- `orders/updateorderstatus/:id` is reserved for admins; delivery partners use `orders/updatedeliverystatus/:id`.
 - Order status transitions use the model enum values, including `ready_for_pickup` and `out_for_delivery`.
 - `getUserProfile`, `getAdminProfile`, `getAllOrders`, `getOrderById`, `getAssignedOrders`, and the cart APIs all depend on a valid session cookie. If the frontend omits credentials, these routes will fail with unauthorized responses.
 - `POST /api/payments/verifyorder/webhook` is stubbed and does not yet process webhook payloads.
@@ -614,7 +619,7 @@ How to represent it in the frontend:
 ## Frontend integration checklist
 
 1. Keep the session cookie attached to every protected request.
-2. Use multipart/form-data for restaurant and menu image uploads.
+2. Use multipart/form-data for restaurant image uploads; send menu items as JSON.
 3. Pass IDs in the URL for all detail, update, and delete endpoints.
 4. For order placement, send the cart id and payment method from the checkout screen.
 5. For online payments, store the returned Razorpay order id and verify it after payment success.

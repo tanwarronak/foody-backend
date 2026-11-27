@@ -74,7 +74,7 @@ return res.status(200).json({
 export const viewCart = async (req, res) => {
     try{
         const userId =  req.user._id;
-        const cart = await Cart_items.findOne({ user_id: userId }).populate('menu.menu_item_id');
+        const cart = await Cart_items.findOne({ user_id: userId }).populate('menu.menu_item_id', '-image');
         if (!cart) {
             return res.status(404).json({ message: "Cart not found" });
         }

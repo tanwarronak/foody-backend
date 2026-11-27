@@ -6,15 +6,22 @@ import { razorpayInstance } from "../config/razorpayConfig.js";
 import { Payment } from "../models/paymentModel.js";
 import { notifyOwner } from "../services/ownerNotificationService.js";
 import mongoose from "mongoose";
+import { calculatePricing } from "../utils/pricing.js";
+import { Coupon } from "../models/couponModel.js";
+import { availableCouponFilter, couponDiscount } from "../utils/coupons.js";
 
 export const createOrder = async (req, res) => {
+    let reservedCoupon = null;
+    let orderSaved = false;
     try {
         const user_id = req.user._id;
         const {
             cartId,
             payment_method,
             address,
-            phone
+            phone,
+            coupon_code,
+            expected_total
         } = req.body;
 
         // =========================================================
@@ -109,6 +116,10 @@ export const createOrder = async (req, res) => {
             });
         }
 
+        if (!restaurant.is_open) {
+            return res.status(400).json({ message: 'This restaurant is currently closed' });
+        }
+
         // =========================================================
         // 8. CREATE ORDER ITEMS
         // =========================================================
@@ -131,13 +142,27 @@ export const createOrder = async (req, res) => {
             0
         );
 
-        const platform_fee = 11;
-        const delivery_fee = 21;
+        if (coupon_code !== undefined && (typeof coupon_code !== 'string' || !coupon_code.trim())) {
+            return res.status(400).json({ message: 'Invalid coupon code' });
+        }
+        if (coupon_code) {
+            reservedCoupon = await Coupon.findOneAndUpdate(
+                availableCouponFilter(coupon_code), { $inc: { usage_count: 1 } }, { returnDocument: 'after' }
+            );
+            if (!reservedCoupon) return res.status(400).json({ message: 'Coupon is invalid, expired, or exhausted' });
+        }
+        const pricing = calculatePricing(subtotal, reservedCoupon ? couponDiscount(reservedCoupon, subtotal) : 0);
+        const platform_fee = pricing.platformFee;
+        const delivery_fee = pricing.deliveryFee;
+        const service_fee = pricing.serviceFee;
+        const discount = pricing.discount;
+        const total = pricing.total;
 
-        const total =
-            subtotal +
-            platform_fee +
-            delivery_fee;
+        if (expected_total !== undefined && (typeof expected_total !== 'number' || Math.abs(expected_total - total) > 0.001)) {
+            if (reservedCoupon) await Coupon.updateOne({ _id: reservedCoupon._id }, { $inc: { usage_count: -1 } });
+            reservedCoupon = null;
+            return res.status(409).json({ message: 'Your cart or coupon has changed. Refresh checkout and try again.' });
+        }
 
         // =========================================================
         // 10. ONLINE PAYMENT
@@ -185,6 +210,10 @@ export const createOrder = async (req, res) => {
 
                 delivery_fee,
 
+                service_fee,
+                discount,
+                coupon_code: reservedCoupon?.code ?? null,
+
                 total_amount: total,
 
                 delivery_address:
@@ -198,6 +227,7 @@ export const createOrder = async (req, res) => {
             });
 
             await order.save();
+            orderSaved = true;
 
             // -----------------------------------------------------
             // CREATE PAYMENT RECORD
@@ -267,6 +297,8 @@ export const createOrder = async (req, res) => {
                 orderId:
                     order._id,
 
+                pricing,
+
                 razorpayOrder: {
                     id:
                         razorpayOrder.id,
@@ -302,6 +334,10 @@ export const createOrder = async (req, res) => {
 
                 delivery_fee,
 
+                service_fee,
+                discount,
+                coupon_code: reservedCoupon?.code ?? null,
+
                 total_amount: total,
 
                 order_status: "pending",
@@ -321,6 +357,7 @@ export const createOrder = async (req, res) => {
             });
 
             await order.save();
+            orderSaved = true;
 
             // -----------------------------------------------------
             // CREATE COD PAYMENT
@@ -394,11 +431,16 @@ export const createOrder = async (req, res) => {
                     "Order placed successfully",
 
                 orderId:
-                    order._id
+                    order._id,
+                pricing
             });
         }
 
     } catch (error) {
+
+        if (reservedCoupon && !orderSaved) {
+            await Coupon.updateOne({ _id: reservedCoupon._id }, { $inc: { usage_count: -1 } }).catch(() => {});
+        }
 
         console.error(
             "Create order error:",
@@ -493,7 +535,7 @@ export const getAllOrders = async (req, res) => {
                           },
                         },
                       },
-                      in: "$$menu.name",
+                      in: { $ifNull: ["$$item.name", "$$menu.name"] },
                     },
                   },
                 },
@@ -505,6 +547,9 @@ export const getAllOrders = async (req, res) => {
             deliveryFee: "$delivery_fee",
 
             platformFee: "$platform_fee",
+            serviceFee: "$service_fee",
+            discount: 1,
+            couponCode: "$coupon_code",
 
             total: "$total_amount",
 
@@ -532,22 +577,8 @@ export const getAllOrders = async (req, res) => {
 
     // ====================== RESTAURANT OWNER ======================
     if (user.role === "admin") {
-      const restaurant = await Restaurant.findOne({
-        owner_id: user._id,
-      });
-
-      if (!restaurant) {
-        return res.status(404).json({
-          message: "Restaurant not found",
-        });
-      }
-
       const orders = await Order.aggregate([
-        {
-          $match: {
-            res_id: restaurant._id,
-          },
-        },
+        { $lookup: { from: "restaurants", localField: "res_id", foreignField: "_id", as: "restaurant" } },
 
         {
           $lookup: {
@@ -570,6 +601,9 @@ export const getAllOrders = async (req, res) => {
         {
           $project: {
             _id: 1,
+
+            restaurantName: { $first: "$restaurant.r_name" },
+            restaurantId: "$res_id",
 
             customerName: {
               $first: "$customer.name",
@@ -608,7 +642,7 @@ export const getAllOrders = async (req, res) => {
                           },
                         },
                       },
-                      in: "$$menu.name",
+                      in: { $ifNull: ["$$item.name", "$$menu.name"] },
                     },
                   },
                 },
@@ -620,6 +654,9 @@ export const getAllOrders = async (req, res) => {
             deliveryFee: "$delivery_fee",
 
             platformFee: "$platform_fee",
+            serviceFee: "$service_fee",
+            discount: 1,
+            couponCode: "$coupon_code",
 
             total: "$total_amount",
 
@@ -707,10 +744,11 @@ export const getOrderById = async (req, res) => {
                             },
                             menu_items:{
                                 $map:{
-                                    input:"$menu_items",
+                                    input:"$items",
                                     as:"menu_item",
                                     in:{
                                         name:"$$menu_item.name",
+                                        quantity:"$$menu_item.quantity",
                                         description:"$$menu_item.description",
                                         price:"$$menu_item.price",
                                         category:"$$menu_item.category",
@@ -732,6 +770,12 @@ export const getOrderById = async (req, res) => {
                             subtotal:1,
                             delivery_fee:1,
                             platform_fee:1,
+                            service_fee:1,
+                            discount:1,
+                            coupon_code:1,
+                            payment_method:1,
+                            delivery_address:1,
+                            createdAt:1,
                             total_amount:1,
                         }
                     }
@@ -784,10 +828,11 @@ export const getOrderById = async (req, res) => {
                             },
                             menu_items:{
     $map:{
-        input:"$menu_items",
+        input:"$items",
         as:"menu_item",
         in:{
             name:"$$menu_item.name",
+            quantity:"$$menu_item.quantity",
             description:"$$menu_item.description",
             price:"$$menu_item.price",
             category:"$$menu_item.category",
@@ -807,13 +852,13 @@ export const getOrderById = async (req, res) => {
                         }
                     }
                 ])
-                if (!order.length) {
+                if (!orders.length) {
   return res.status(404).json({
     message: "Order not found",
   });
 }
 
-return res.status(200).json(order[0]);
+return res.status(200).json(orders[0]);
             }
             return res.status(403).json({ message: "Access denied" });
     }
@@ -826,16 +871,9 @@ return res.status(200).json(order[0]);
 export const updateOrderStatus = async (req, res) => {
     try {
             const orderId = req.params.id;
-            const userId = req.user._id;
             const newStatus = req.body.order_status;
-            const restaurant = await Restaurant.findOne({owner_id: userId});
-            if(!restaurant) return res.status(404).json({message:"Restaurant not found"});
-            const res_id = restaurant._id;
             const order = await Order.findById(orderId);
             if(!order) return res.status(404).json({message:"Order not found"});
-            if(order.res_id.toString() !== res_id.toString()){
-                return res.status(403).json({message:"You are not authorized to update this order"});
-            }
             const validTransitions = {
                 pending: ["accepted", "cancelled"],
                 accepted: ["preparing", "cancelled"],

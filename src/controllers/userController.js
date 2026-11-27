@@ -64,7 +64,7 @@ export const getUserProfile = async (req, res) => {
     try {
         const adminId = req.user.id;
         const admin = await User.findById(adminId)
-        const orders = await Order.find({ res_id: adminId });
+        const orders = await Order.find();
         const totalOrders = orders.length;
         if(totalOrders===0) return res.status(200).json({
             name: admin.name,

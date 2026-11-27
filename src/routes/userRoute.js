@@ -17,10 +17,10 @@ router.get(
   }),
   (req, res) => {
     if (req.user.role === "admin") {
-      return res.redirect("http://10.60.31.231:3000");
+      return res.redirect(process.env.ADMIN_APP_URL || "http://10.60.31.231:3000");
     }
 
-    return res.redirect("https://foody.monster/?auth=success");
+    return res.redirect(`${(process.env.CUSTOMER_APP_URL || "https://foody.monster").replace(/\/$/, "")}/?auth=success`);
   }
 );
 

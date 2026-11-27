@@ -34,6 +34,7 @@ app.use(
     origin: [
       "https://foody.monster",
       "http://10.60.31.231:3000",
+      ...[process.env.CUSTOMER_APP_URL, process.env.ADMIN_APP_URL].filter(Boolean),
     ],
     credentials: true,
   })
@@ -69,6 +70,7 @@ import menuRoute from './src/routes/menuRoute.js';
 import cartRoute from './src/routes/cartRoute.js';
 import orderRoute from './src/routes/orderRoute.js';
 import paymentRoute from './src/routes/paymentRoute.js';
+import couponRoute from './src/routes/couponRoute.js';
 
 // use routes
 
@@ -78,5 +80,6 @@ app.use('/api/menuitems', menuRoute); // tested
 app.use('/api/carts', cartRoute); //tested
 app.use('/api/orders', orderRoute);
 app.use('/api/payments', paymentRoute);
+app.use('/api/coupons', couponRoute);
 
 export default app;
